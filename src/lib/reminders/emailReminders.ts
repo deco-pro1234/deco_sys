@@ -186,10 +186,10 @@ function buildEmailContent(candidate: ReminderCandidate, kinds: ReminderKind[]) 
   const dateStr = hongKongYmd(candidate.targetDate)
   const link = `${appBaseUrl()}${candidate.hrefPath}`
   const urgency = urgencySubjectPrefix(candidate.daysDiff)
-  const subject = `${urgency}[SK11-system] ${typeLabel}「${candidate.title}」· ${formatDaysDiffLabel(candidate.daysDiff)}`
+  const subject = `${urgency}[deco-production] ${typeLabel}「${candidate.title}」· ${formatDaysDiffLabel(candidate.daysDiff)}`
 
   const text = [
-    `SK11-system 到期提醒 ${urgency}`,
+    `deco-production 到期提醒 ${urgency}`,
     ``,
     `類型：${typeLabel}`,
     `標題：${candidate.title}`,
@@ -203,7 +203,7 @@ function buildEmailContent(candidate: ReminderCandidate, kinds: ReminderKind[]) 
 
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1f2937; line-height: 1.6;">
-      <h2 style="margin: 0 0 12px; color: #1e3a5f;">SK11-system 到期提醒 ${escapeHtml(urgency)}</h2>
+      <h2 style="margin: 0 0 12px; color: #1e3a5f;">deco-production 到期提醒 ${escapeHtml(urgency)}</h2>
       <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
         <tr><td style="padding: 6px 0; color: #6b7280;">類型</td><td style="padding: 6px 0; font-weight: 600;">${typeLabel}</td></tr>
         <tr><td style="padding: 6px 0; color: #6b7280;">標題</td><td style="padding: 6px 0; font-weight: 600;">${escapeHtml(candidate.title)}</td></tr>

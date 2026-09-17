@@ -1,6 +1,6 @@
-# FINNE18 - 财务收支记录程序
+# deco-production
 
-本项目是一个侧重于手机端使用的 H5 财务收支记录程序，包含收支数据录入、资金池管理、分类管理、用户管理、薪金、活动/合约，以及报表与 PDF / 会计结算包导出。项目前端与后端均基于 Next.js (App Router) + Prisma (PostgreSQL) 打造，样式基于 Tailwind CSS，移动端优先。
+deco Production Limited 财务收支记录系统（由 SK11 Finance / FINNE18 代码演进）。本项目是一个侧重于手机端使用的 H5 财务收支记录程序，包含收支数据录入、资金池管理、分类管理、用户管理、薪金、活动/合约，以及报表与 PDF / 会计结算包导出。项目前端与后端均基于 Next.js (App Router) + Prisma (PostgreSQL) 打造，样式基于 Tailwind CSS，移动端优先。
 
 ## 开发手册与文档
 
@@ -17,10 +17,10 @@
    INIT_SECRET="your-init-secret"
    # Email reminders (Resend) — optional; job no-ops if missing
    RESEND_API_KEY="re_xxx"
-   RESEND_FROM="SK11-system <noreply@your-verified-domain.com>"
+   RESEND_FROM="deco-production <noreply@your-verified-domain.com>"
    REMINDER_EMAILS="you@example.com"
    CRON_SECRET="long-random-string"
-   APP_BASE_URL="https://sk11finance.up.railway.app"
+   APP_BASE_URL="https://your-app.up.railway.app"
    # WhatsApp Cloud API（可選；見 docs/whatsapp-webhooks.md）
    WHATSAPP_VERIFY_TOKEN="your-verify-token"
    WHATSAPP_ACCESS_TOKEN="EAAB..."
@@ -50,12 +50,12 @@
    - Web 端点：`POST /api/cron/reminders`（`Authorization: Bearer $CRON_SECRET`）
    - 仓库内另有 [`cron-worker/`](./cron-worker/)：用 `node-cron` 每天（默认香港 09:00）请求上述端点
    - **Railway 第二台服务**（与网站同仓库）：
-     1. Project 内 **New → Empty Service / GitHub Repo**（同一 `Sk11_finance` 仓库）
+     1. Project 内 **New → Empty Service / GitHub Repo**（同一 `deco_sys` / deco-production 仓库）
      2. Settings → **Root Directory** 设为 `cron-worker`（或 Dockerfile Path = `cron-worker/Dockerfile`）
      3. **不要**在网站服务或 worker 上填 Railway「Cron Schedule」（worker 靠 node-cron 常驻）
      4. Worker 环境变量（可与网站共享）：
         ```env
-        APP_BASE_URL=https://sk11finance.up.railway.app
+        APP_BASE_URL=https://your-app.up.railway.app
         CRON_SECRET=与网站相同
         CRON_EXPR=0 9 * * *
         CRON_TZ=Asia/Hong_Kong
@@ -91,4 +91,4 @@
 
 ## 仓库
 
-GitHub：https://github.com/11theridings-hk/Sk11_finance
+GitHub：https://github.com/deco-pro1234/deco_sys

@@ -2,24 +2,25 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'SK11 Finance',
-    short_name: 'SK11',
-    description: 'SK11 finance management system',
+    name: 'deco-production',
+    short_name: 'deco',
+    description: 'deco Production Limited finance management system',
     start_url: '/',
     display: 'standalone',
-    background_color: '#0B1736',
-    theme_color: '#0B1736',
+    background_color: '#000000',
+    theme_color: '#000000',
     icons: [
       {
-        src: '/icon',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'maskable',
+        src: '/brand/deco-logo.jpg',
+        sizes: '1242x1218',
+        type: 'image/jpeg',
+        purpose: 'any',
       },
       {
-        src: '/apple-icon',
-        sizes: '180x180',
+        src: '/icon.png',
+        sizes: '512x512',
         type: 'image/png',
+        purpose: 'any',
       },
     ],
   }

@@ -24,18 +24,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SK11 Finance",
-  description: "SK11 finance management system",
-  applicationName: "SK11 Finance",
+  title: "deco-production",
+  description: "deco Production Limited finance management system",
+  applicationName: "deco-production",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "SK11",
+    title: "deco",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0B1736",
+  themeColor: "#000000",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

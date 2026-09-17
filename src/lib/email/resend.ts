@@ -23,7 +23,7 @@ export async function sendReminderEmail(input: {
   text: string
 }) {
   const apiKey = process.env.RESEND_API_KEY
-  const from = process.env.RESEND_FROM || `SK11-system <${RESEND_SANDBOX_FROM}>`
+  const from = process.env.RESEND_FROM || `deco-production <${RESEND_SANDBOX_FROM}>`
 
   if (!apiKey) {
     throw new Error('RESEND_API_KEY is not configured')

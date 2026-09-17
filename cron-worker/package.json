@@ -1,5 +1,5 @@
 {
-  "name": "sk11-reminder-cron-worker",
+  "name": "deco-reminder-cron-worker",
   "version": "1.0.0",
   "private": true,
   "description": "Always-on worker: daily reminder emails via node-cron (no external cron SaaS)",

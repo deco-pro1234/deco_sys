@@ -113,9 +113,7 @@ export default function TopNav({
       <div className="sticky top-0 z-30 -mx-4 border-b border-gray-200 bg-[#F2F2F7]/95 backdrop-blur sm:hidden">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#0B1736] text-white shadow-sm">
-              <BrandMark className="h-8 w-8" strokeWidth={16} />
-            </div>
+            <BrandMark className="h-11 w-11 shrink-0 shadow-sm" size={44} />
             <div className="min-w-0">
               <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400">{session?.roleName}</div>
               <div className="truncate text-base font-semibold text-gray-900">{currentPageName}</div>

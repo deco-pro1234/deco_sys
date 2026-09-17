@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { login } from "../actions/auth";
 import { LOCALE_COOKIE, createTranslator, normalizeLocale, type Locale } from "@/lib/i18n";
 import { getDefaultHomePath } from "@/lib/access";
-import BrandLogo from "@/components/BrandLogo";
+import BrandMark, { BRAND_NAME, BRAND_TAGLINE } from "@/components/BrandMark";
 
 export default function LoginPage() {
   const [locale, setLocale] = useState<Locale>("zh-HK");
@@ -72,8 +72,14 @@ export default function LoginPage() {
             <option value="en">{t('english')}</option>
           </select>
         </div>
-        <div className="px-6 pb-2 pt-1 sm:px-8">
-          <BrandLogo className="justify-center" />
+        <div className="flex flex-col items-center gap-2 px-6 pb-2 pt-1 sm:px-8">
+          <BrandMark className="h-28 w-28 shadow-md" size={112} priority />
+          <div className="text-center">
+            <div className="text-lg font-semibold lowercase tracking-[0.12em] text-[#1A1040]">
+              {BRAND_NAME}
+            </div>
+            <div className="text-xs font-medium text-gray-500">{BRAND_TAGLINE}</div>
+          </div>
         </div>
         {/* 顶部选项卡 */}
         <div className="flex border-b">

@@ -5,7 +5,7 @@
  * Uses node-cron (Asia/Hong_Kong) to POST the main app's /api/cron/reminders.
  *
  * Required env:
- *   APP_BASE_URL   e.g. https://sk11finance.up.railway.app
+ *   APP_BASE_URL   e.g. https://your-app.up.railway.app
  *   CRON_SECRET    same value as the web service
  *
  * Optional:

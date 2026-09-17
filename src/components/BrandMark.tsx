@@ -1,46 +1,39 @@
+import Image from 'next/image'
 import type { CSSProperties } from 'react'
+
+export const BRAND_LOGO_SRC = '/brand/deco-logo-256.png'
+export const BRAND_NAME = 'deco-production'
+export const BRAND_NAME_SHORT = 'deco'
+export const BRAND_TAGLINE = 'Production Limited'
 
 type BrandMarkProps = {
   className?: string
   style?: CSSProperties
+  /** Kept for call-site compatibility; ignored for the raster logo. */
   strokeWidth?: number
+  size?: number
+  alt?: string
+  priority?: boolean
 }
 
 export default function BrandMark({
   className,
   style,
-  strokeWidth = 14,
+  size,
+  alt = 'deco Production Limited',
+  priority = false,
 }: BrandMarkProps) {
+  const resolvedSize = size ?? 44
+
   return (
-    <svg
-      viewBox="0 0 256 256"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
+    <Image
+      src={BRAND_LOGO_SRC}
+      alt={alt}
+      width={resolvedSize}
+      height={resolvedSize}
+      priority={priority}
+      className={`rounded-full object-cover ${className ?? ''}`}
       style={style}
-      aria-hidden="true"
-    >
-      <path
-        d="M29 161C4 142 -1 106 18 77C43 40 95 27 149 33C197 38 234 58 241 90C248 123 229 155 192 170C156 185 109 181 78 163C59 152 45 139 37 126"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M121 20C114 74 110 136 114 236"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M86 149C112 171 149 193 194 199C216 202 237 198 250 188"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    />
   )
 }

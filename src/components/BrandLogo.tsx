@@ -1,4 +1,7 @@
-import BrandMark from './BrandMark'
+import BrandMark, {
+  BRAND_NAME_SHORT,
+  BRAND_TAGLINE,
+} from './BrandMark'
 
 type BrandLogoProps = {
   className?: string
@@ -13,17 +16,15 @@ export default function BrandLogo({
 }: BrandLogoProps) {
   return (
     <div className={`flex items-center gap-3 ${className ?? ''}`}>
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#0B1736] text-white shadow-sm">
-        <BrandMark className="h-8 w-8" strokeWidth={16} />
-      </div>
+      <BrandMark className="h-11 w-11 shrink-0 shadow-sm" size={44} priority />
       {showText && (
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold uppercase tracking-[0.18em] text-[#0B1736]">
-            SK11
+          <div className="truncate text-sm font-semibold lowercase tracking-[0.08em] text-[#1A1040]">
+            {BRAND_NAME_SHORT}
           </div>
           {!compact && (
             <div className="truncate text-xs font-medium text-gray-500">
-              Finance
+              {BRAND_TAGLINE}
             </div>
           )}
         </div>

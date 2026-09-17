@@ -203,7 +203,7 @@ export function generateFallbackEnPdf(input: GeneratePayslipPdfInput, errorMsg?:
     const pageW = doc.internal.pageSize.getWidth();
     const margin = 40;
     let y = margin;
-    doc.text(input.company.COMPANY_NAME_EN || 'SK11 Finance Limited', pageW / 2, y, { align: 'center' });
+    doc.text(input.company.COMPANY_NAME_EN || 'deco Production Limited', pageW / 2, y, { align: 'center' });
     y += 22;
     doc.setFontSize(14);
     doc.text('PAYSLIP CERTIFICATE', pageW / 2, y, { align: 'center' });
@@ -211,7 +211,7 @@ export function generateFallbackEnPdf(input: GeneratePayslipPdfInput, errorMsg?:
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     const snap = input.profile;
-    doc.text(`Payslip No.: SK11-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`, margin, y); y += 13;
+    doc.text(`Payslip No.: DECO-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`, margin, y); y += 13;
     doc.text(`Period: ${shortDate(input.payroll.periodStart)} ~ ${shortDate(input.payroll.periodEnd)}`, margin, y); y += 13;
     doc.text(`Payroll Date: ${shortDate(input.payroll.payrollDate)}`, margin, y); y += 13;
     doc.text(`Name: ${snap.legalNameEn || 'User-' + String(input.payroll.id).slice(-6)}`, margin, y); y += 13;
@@ -247,7 +247,7 @@ export function generateFallbackEnPdf(input: GeneratePayslipPdfInput, errorMsg?:
     doc.setFont('helvetica', 'italic');
     doc.setTextColor(100);
     doc.text(
-      `Generated: ${new Date(input.payroll.pdfGeneratedAt || Date.now()).toLocaleString('en-HK')}  Payslip: SK11-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`,
+      `Generated: ${new Date(input.payroll.pdfGeneratedAt || Date.now()).toLocaleString('en-HK')}  Payslip: DECO-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`,
       pageW / 2,
       doc.internal.pageSize.getHeight() - 30,
       { align: 'center' },
@@ -317,7 +317,7 @@ export function generatePayslipPdf(input: GeneratePayslipPdfInput, fontPack?: Fo
     let cursorY = margin;
   // --- Header (company) ---
   const companyZh = input.company.COMPANY_NAME_ZH || '';
-  const companyEn = input.company.COMPANY_NAME_EN || 'SK11 Finance Limited';
+  const companyEn = input.company.COMPANY_NAME_EN || 'deco Production Limited';
   const companyAddr = input.company.COMPANY_ADDRESS || '';
   const companyPhone = input.company.COMPANY_PHONE || '';
 
@@ -363,7 +363,7 @@ export function generatePayslipPdf(input: GeneratePayslipPdfInput, fontPack?: Fo
   setBold(false);
   doc.setFontSize(10);
   const currency = input.payroll.currency || 'HKD';
-  const payslipNo = `SK11-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`;
+  const payslipNo = `DECO-PAY-${String(input.payroll.id).slice(-8).toUpperCase()}`;
   doc.text(`Payslip No.: ${payslipNo}`, margin, cursorY);
   doc.text(`Currency: ${currency}`, pageW - margin, cursorY, { align: 'right' });
   cursorY += 12;

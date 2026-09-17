@@ -5,7 +5,7 @@ Calls the main web app: `POST $APP_BASE_URL/api/cron/reminders`.
 
 ## Railway setup
 
-1. In the same project as `Sk11_finance`, create a **new service** from the same GitHub repo.
+1. In the same project as `deco-production` (`deco_sys`), create a **new service** from the same GitHub repo.
 2. Set **Root Directory** to `cron-worker` (so it builds this Dockerfile).
 3. Do **not** enable Railway **Cron Schedule** on this service (or on the web service).
 4. Variables on the worker:
