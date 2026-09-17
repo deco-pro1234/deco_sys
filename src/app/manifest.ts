@@ -11,9 +11,9 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: '#000000',
     icons: [
       {
-        src: '/brand/deco-logo.jpg',
-        sizes: '1242x1218',
-        type: 'image/jpeg',
+        src: '/brand/deco-logo-256.png',
+        sizes: '256x256',
+        type: 'image/png',
         purpose: 'any',
       },
       {
