@@ -28,32 +28,38 @@ export async function login(account: string, password: string, isAdminLogin: boo
   const normalizedAccount = String(account || '').trim()
   const plainPassword = String(password || '')
 
-  // ===== 超級管理員後門（首次設定用；建立正式管理員後請手動刪除此區段）=====
+  // ===== 首次登入：帳密 admin / 密碼 admin → 確保 DB 內有真實管理員 =====
   if (normalizedAccount === 'admin' && plainPassword === 'admin') {
-    const token = await new SignJWT({
-      userId: 'SUPERADMIN_BOOTSTRAP',
-      roleName: '超級管理員 (Bootstrap)',
-      isAdmin: true,
-      publicLedgerRole: 'MEMBER',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('24h')
-      .sign(JWT_SECRET)
-    ;(await cookies()).set('session_token', token, {
-      httpOnly: true, path: '/', secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 60 * 60 * 24,
-    })
-    return {
-      success: true,
-      redirectTo: '/admin',
-      user: {
-        id: 'SUPERADMIN_BOOTSTRAP',
-        roleName: '超級管理員 (Bootstrap)',
+    let bootstrapAdmin = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: 'admin@localhost.local' },
+          { email: 'initadmin@localhost.local' },
+          { roleName: '超级管理员' },
+          { roleName: '超級管理員' },
+        ],
         isAdmin: true,
-        publicLedgerRole: 'MEMBER' as PublicLedgerRole,
       },
+      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+    })
+
+    if (!bootstrapAdmin) {
+      bootstrapAdmin = await prisma.user.create({
+        data: {
+          email: 'admin@localhost.local',
+          password: await hashPassword('admin'),
+          roleName: '超级管理员',
+          isAdmin: true,
+          poolEnabled: false,
+          publicLedgerRole: 'MEMBER',
+        },
+        select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+      })
     }
+
+    return await performLogin(bootstrapAdmin, true)
   }
-  // ===== 超級管理員後門 END =====
+  // ===== 首次登入 END =====
 
   if (!normalizedAccount) {
     return { success: false, error: t('accountRequired') }
@@ -196,11 +202,30 @@ export async function getSession() {
     const { payload } = await jwtVerify(token, JWT_SECRET)
 
     if (payload.userId === 'SUPERADMIN_BOOTSTRAP' && payload.isAdmin) {
+      // Legacy bootstrap cookie → map to a real admin row (or create one).
+      let admin = await prisma.user.findFirst({
+        where: { isAdmin: true },
+        select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+        orderBy: { createdAt: 'asc' },
+      })
+      if (!admin) {
+        admin = await prisma.user.create({
+          data: {
+            email: 'admin@localhost.local',
+            password: await hashPassword('admin'),
+            roleName: '超级管理员',
+            isAdmin: true,
+            poolEnabled: false,
+            publicLedgerRole: 'MEMBER',
+          },
+          select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+        })
+      }
       return {
-        userId: 'SUPERADMIN_BOOTSTRAP',
-        roleName: String(payload.roleName || '超級管理員 (Bootstrap)'),
+        userId: admin.id,
+        roleName: admin.roleName,
         isAdmin: true,
-        publicLedgerRole: ((payload.publicLedgerRole as string) || 'MEMBER') as PublicLedgerRole,
+        publicLedgerRole: (admin.publicLedgerRole ?? 'MEMBER') as PublicLedgerRole,
       }
     }
     

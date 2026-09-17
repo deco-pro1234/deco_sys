@@ -34,11 +34,11 @@ export default async function ReviewPage() {
 
   return (
     <ReviewClient
-      pendingRecords={pendingRecords}
-      reviewedRecords={reviewedRecords}
+      pendingRecords={JSON.parse(JSON.stringify(pendingRecords))}
+      reviewedRecords={JSON.parse(JSON.stringify(reviewedRecords))}
       locale={locale}
       title={t('reviewPage')}
-      categories={categories}
+      categories={JSON.parse(JSON.stringify(categories))}
       pools={pools.map((p) => ({ id: p.id, name: p.name }))}
     />
   )

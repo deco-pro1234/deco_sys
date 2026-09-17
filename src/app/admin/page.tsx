@@ -16,6 +16,11 @@ export const metadata = {
   title: "管理后台",
 };
 
+function toClientJSON<T>(value: T): T {
+  // Prisma Date/Decimal objects are not valid Client Component props.
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export default async function AdminPage() {
   const session = await getSession();
   if (!session) {
@@ -27,14 +32,16 @@ export default async function AdminPage() {
   const locale = await getCurrentLocale();
   const t = createTranslator(locale);
 
-  // 获取各个模块的数据
-  const categories = await getCategories();
-  const attachments = await queryAttachmentsForAdmin({ source: 'ALL' });
-  const pools = await getCapitalPools();
-  const users = await getUsers();
-  const aiSettings = await getAISettings();
-  const pluginFlags = await getPluginFlags();
-  const whatsappBindings = await listWhatsAppBindings();
+  const [categories, attachments, pools, users, aiSettings, pluginFlags, whatsappBindings] =
+    await Promise.all([
+      getCategories(),
+      queryAttachmentsForAdmin({ source: 'ALL' }),
+      getCapitalPools(),
+      getUsers(),
+      getAISettings(),
+      getPluginFlags(),
+      listWhatsAppBindings(),
+    ]);
 
   return (
     <div className="bg-[#F2F2F7] min-h-screen">
@@ -61,13 +68,13 @@ export default async function AdminPage() {
       {/* 选项卡及内容组件 */}
       <main>
         <AdminTabs
-          initialCategories={categories}
-          initialAttachments={attachments}
-          initialPools={pools}
-          initialUsers={users}
-          initialAISettings={aiSettings}
-          initialPluginFlags={pluginFlags}
-          initialWhatsAppBindings={whatsappBindings}
+          initialCategories={toClientJSON(categories)}
+          initialAttachments={toClientJSON(attachments)}
+          initialPools={toClientJSON(pools)}
+          initialUsers={toClientJSON(users)}
+          initialAISettings={toClientJSON(aiSettings)}
+          initialPluginFlags={toClientJSON(pluginFlags)}
+          initialWhatsAppBindings={toClientJSON(whatsappBindings)}
           locale={locale}
         />
       </main>
