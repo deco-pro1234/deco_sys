@@ -115,9 +115,10 @@ async function resetFailedMigrations() {
     return;
   }
   console.log(
-    `[bootstrap] Found ${failed.length} failed/pending migrations. Resolving each as --rolled-back.`,
+    `[bootstrap] Found ${failed.length} failed/pending migrations. Resolving each as --rolled-back so migrate deploy can retry.`,
   );
   for (const r of failed) {
+    console.log(`[bootstrap]   resolve --rolled-back ${r.migration_name}`);
     run('npx', ['prisma', 'migrate', 'resolve', '--rolled-back', r.migration_name]);
   }
 }
