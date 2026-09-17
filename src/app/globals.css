@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .mobile-safe-pb {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+  .mobile-safe-nav {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  }
+  .mobile-safe-action {
+    bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+  .mobile-safe-sheet {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+}
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@layer base {
+  body {
+    background-color: #F2F2F7;
+    color: #111827; /* Tailwind gray-900 equivalent */
+  }
+
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+}
+
+/* Custom scrollbar to match iOS style slightly */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D1D1D6;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #C7C7CC;
+}

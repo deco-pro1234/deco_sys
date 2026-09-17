@@ -1,0 +1,465 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String   @id @default(uuid())
+  email                  String   @unique // 登入帳號 (必填；每個 user 都要有)
+  emailVerified          Boolean  @default(false)
+  verificationToken      String?
+  verificationTokenExpiresAt DateTime?
+  verificationSentAt     DateTime?
+  password               String   // 密碼 (SHA-256 雜湊 + PWD_SALT)；移除 @unique 避免密碼重複無法建 User
+  roleName               String   // 角色顯示名稱 (也可當登入帳號)
+  isAdmin                Boolean  @default(false) // 是否为管理员
+  poolEnabled            Boolean  @default(false) // 是否启用资金池
+  publicLedgerRole       String   @default("NONE") // "NONE" | "MEMBER"
+  ocrEnabled             Boolean  @default(true) // 是否允許使用圖片辨識
+  privateLedgerVisibility String  @default("PRIVATE") // "PRIVATE" | "PUBLIC"
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  // 关系
+  records        Record[]        @relation("UserRecords")
+  privateRecords PrivateRecord[] @relation("UserPrivateRecords")
+  activities     Activity[]      @relation("UserActivities")
+  attachments    Attachment[]    @relation("UserAttachments")
+  capitalPools   CapitalPool[]   @relation("UserCapitalPools")
+  contracts      Contract[]      @relation("UserContracts")
+  memos          Memo[]          @relation("UserMemos")
+  profile        UserProfile?
+  payrolls       Payroll[]       @relation("UserPayrolls")
+  payrollsSubmitted Payroll[]    @relation("AdminSubmittedPayrolls")
+  payrollsPaid   Payroll[]       @relation("AdminPaidPayrolls")
+  salaryCyclesCreated SalaryCycle[] @relation("AdminCreatedCycles")
+  recurringTemplates RecurringTemplate[] @relation("UserRecurringTemplates")
+  recurringInstances RecurringInstance[] @relation("UserRecurringInstances")
+  whatsappBindings   WhatsAppBinding[]   @relation("UserWhatsAppBindings")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String // 分类名称
+  type      String   @default("EXPENSE") // "INCOME" 或 "EXPENSE"
+  parentId  String? // 父分类ID
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关系
+  parent         Category?    @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children       Category[]   @relation("CategoryToCategory")
+  records        Record[]     @relation("CategoryRecords")
+  subRecords     Record[]     @relation("SubCategoryRecords")
+  thirdRecords   Record[]     @relation("ThirdCategoryRecords")
+  privateRecords PrivateRecord[] @relation("CategoryPrivateRecords")
+  subPrivateRecords PrivateRecord[] @relation("SubCategoryPrivateRecords")
+  thirdPrivateRecords PrivateRecord[] @relation("ThirdCategoryPrivateRecords")
+  contracts      Contract[]   @relation("CategoryContracts")
+  subContracts   Contract[]   @relation("SubCategoryContracts")
+  thirdContracts Contract[]   @relation("ThirdCategoryContracts")
+  attachments    Attachment[] @relation("CategoryAttachments")
+  recurringTemplates RecurringTemplate[] @relation("CategoryRecurringTemplates")
+  subRecurringTemplates RecurringTemplate[] @relation("SubCategoryRecurringTemplates")
+  thirdRecurringTemplates RecurringTemplate[] @relation("ThirdCategoryRecurringTemplates")
+}
+
+model CapitalPool {
+  id               String   @id @default(uuid())
+  name             String // 资金池名称
+  balanceHkd       Float    @default(0) // HKD 余额
+  userId           String? // 关联角色ID（可选）
+  isReviewRequired Boolean  @default(false) // 是否为审核账户
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // 关系
+  user      User?      @relation("UserCapitalPools", fields: [userId], references: [id])
+  records   Record[]   @relation("CapitalPoolRecords")
+  contracts Contract[] @relation("CapitalPoolContracts")
+  recurringTemplates RecurringTemplate[] @relation("CapitalPoolRecurringTemplates")
+}
+
+model Record {
+  id            String   @id @default(uuid())
+  type          String // "INCOME" | "EXPENSE"
+  status        String   @default("APPROVED") // "PENDING" (待审) | "APPROVED" (已审) | "REJECTED" (驳回)
+  date          DateTime // 记录日期
+  note          String? // 备注说明
+  amount        Float // 金额（正数/负数）
+  attachmentUrl String? // 附件路径
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // 关联旧记录用于修改待审
+  originalRecordId String?
+  isReviewing      Boolean @default(false)
+
+  // 外键
+  userId          String
+  categoryId      String
+  subCategoryId   String?
+  thirdCategoryId String?
+  poolId          String?
+
+  // 关系
+  user           User         @relation("UserRecords", fields: [userId], references: [id])
+  category       Category     @relation("CategoryRecords", fields: [categoryId], references: [id])
+  subCategory    Category?    @relation("SubCategoryRecords", fields: [subCategoryId], references: [id])
+  thirdCategory  Category?    @relation("ThirdCategoryRecords", fields: [thirdCategoryId], references: [id])
+  pool           CapitalPool? @relation("CapitalPoolRecords", fields: [poolId], references: [id])
+  originalRecord Record?      @relation("ModifiedRecord", fields: [originalRecordId], references: [id])
+  modifications  Record[]     @relation("ModifiedRecord")
+  attachments    Attachment[] @relation("RecordAttachments")
+  memos          Memo[]       @relation("RecordMemos")
+}
+
+model PrivateRecord {
+  id            String   @id @default(uuid())
+  type          String // "INCOME" | "EXPENSE"
+  date          DateTime
+  note          String?
+  customCategory String?
+  amount        Float
+  attachmentUrl String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // 外键
+  userId          String
+  categoryId      String
+  subCategoryId   String?
+  thirdCategoryId String?
+
+  // 关系
+  user          User       @relation("UserPrivateRecords", fields: [userId], references: [id])
+  category      Category   @relation("CategoryPrivateRecords", fields: [categoryId], references: [id])
+  subCategory   Category?  @relation("SubCategoryPrivateRecords", fields: [subCategoryId], references: [id])
+  thirdCategory Category?  @relation("ThirdCategoryPrivateRecords", fields: [thirdCategoryId], references: [id])
+  attachments   Attachment[] @relation("PrivateRecordAttachments")
+  memos         Memo[]       @relation("PrivateRecordMemos")
+}
+
+model Contract {
+  id            String   @id @default(uuid())
+  title         String
+  type          String
+  effectiveDate DateTime
+  expiryDate    DateTime
+  reminderDays  Int      @default(15)
+  note          String?
+  amount        Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // 外键
+  userId          String
+  categoryId      String?
+  subCategoryId   String?
+  thirdCategoryId String?
+  poolId          String?
+
+  // 关系
+  user          User         @relation("UserContracts", fields: [userId], references: [id])
+  category      Category?    @relation("CategoryContracts", fields: [categoryId], references: [id])
+  subCategory   Category?    @relation("SubCategoryContracts", fields: [subCategoryId], references: [id])
+  thirdCategory Category?    @relation("ThirdCategoryContracts", fields: [thirdCategoryId], references: [id])
+  pool          CapitalPool? @relation("CapitalPoolContracts", fields: [poolId], references: [id])
+  attachments   Attachment[] @relation("ContractAttachments")
+  memos         Memo[]       @relation("ContractMemos")
+}
+
+model Activity {
+  id           String   @id @default(uuid())
+  title        String
+  note         String?
+  eventDate    DateTime
+  reminderDays Int      @default(15)
+  visibility   String   @default("PUBLIC") // "PUBLIC" | "PRIVATE"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 外键
+  userId String
+
+  // 关系
+  user        User         @relation("UserActivities", fields: [userId], references: [id])
+  attachments Attachment[] @relation("ActivityAttachments")
+  memos       Memo[]       @relation("ActivityMemos")
+}
+
+model Attachment {
+  id        String   @id @default(uuid())
+  fileUrl   String // 文件路径
+  size      Int // 文件大小(bytes)
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 外键
+  uploaderId String
+  categoryId String?
+  recordId   String?
+  privateRecordId String?
+  contractId String?
+  activityId String?
+  payrollPaidId String? @unique
+  payrollPdfId  String? @unique
+  recurringInstanceId String?
+
+  // 关系
+  uploader      User          @relation("UserAttachments", fields: [uploaderId], references: [id])
+  category      Category?     @relation("CategoryAttachments", fields: [categoryId], references: [id])
+  record        Record?       @relation("RecordAttachments", fields: [recordId], references: [id])
+  privateRecord PrivateRecord? @relation("PrivateRecordAttachments", fields: [privateRecordId], references: [id])
+  contract      Contract?     @relation("ContractAttachments", fields: [contractId], references: [id])
+  activity      Activity?     @relation("ActivityAttachments", fields: [activityId], references: [id])
+  payrollPaid   Payroll?      @relation("PaidReceiptAttachments", fields: [payrollPaidId], references: [id])
+  payrollPdf    Payroll?      @relation("PdfPayrollAttachments", fields: [payrollPdfId], references: [id])
+  recurringInstance RecurringInstance? @relation("RecurringInstanceAttachments", fields: [recurringInstanceId], references: [id])
+}
+
+model Memo {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 外键
+  authorId        String
+  recordId        String?
+  contractId      String?
+  privateRecordId String?
+  activityId      String?
+
+  // 关系
+  author        User           @relation("UserMemos", fields: [authorId], references: [id])
+  record        Record?        @relation("RecordMemos", fields: [recordId], references: [id])
+  contract      Contract?      @relation("ContractMemos", fields: [contractId], references: [id])
+  privateRecord PrivateRecord? @relation("PrivateRecordMemos", fields: [privateRecordId], references: [id])
+  activity      Activity?      @relation("ActivityMemos", fields: [activityId], references: [id])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ReminderEmailLog {
+  id         String   @id @default(uuid())
+  entityType String // CONTRACT | ACTIVITY | RECURRING
+  entityId   String
+  kind       String // advance | d5 | due | overdue_1 | overdue_7 | overdue_30 | combined
+  anchorDate String // YYYY-MM-DD of target date
+  sentAt     DateTime @default(now())
+  toEmails   String
+  subject    String?
+  status     String   @default("SENT") // SENT | FAILED
+  error      String?
+
+  @@unique([entityType, entityId, kind, anchorDate])
+  @@index([entityType, entityId])
+}
+
+/// WhatsApp 電話 ↔ 系統用戶綁定（E.164 純數字，如 85291234567）
+model WhatsAppBinding {
+  id        String   @id @default(uuid())
+  phoneE164 String   @unique
+  userId    String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation("UserWhatsAppBindings", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserProfile {
+  userId               String   @id
+  legalNameEn          String
+  legalNameZh          String?
+  hkid                 String?
+  passportNo           String?
+  dateOfBirth          DateTime?
+  jobTitle             String?
+  department           String?
+  dateJoined           DateTime?
+  dateOfTermination    DateTime?
+  defaultBaseSalaryHkd Float?   @default(0)
+  bankName             String?
+  bankAccountNo        String?
+  mpfAccountNo         String?
+  addressLine1         String?
+  addressLine2         String?
+  contactPhone         String?
+  contactEmail         String?
+  emergencyName        String?
+  emergencyPhone       String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum SalaryCycleStatus {
+  OPEN
+  LOCKED
+  SETTLED
+}
+
+enum SalaryCycleType {
+  MONTHLY
+  SEMI_MONTHLY
+  WEEKLY
+  BI_WEEKLY
+  ONE_OFF
+}
+
+model SalaryCycle {
+  id                  String            @id @default(uuid())
+  cycleType           SalaryCycleType   @default(MONTHLY)
+  periodStart         DateTime
+  periodEnd           DateTime
+  payrollDate         DateTime
+  status              SalaryCycleStatus @default(OPEN)
+  note                String?
+  headcountTotal      Int               @default(0)
+  headcountConfirmed  Int               @default(0)
+  headcountPaid       Int               @default(0)
+  grossTotalHkd       Float             @default(0)
+  deductionTotalHkd   Float             @default(0)
+  netPayableTotalHkd  Float             @default(0)
+  amountPaidTotalHkd  Float             @default(0)
+  createdByUserId     String
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  createdBy User       @relation("AdminCreatedCycles", fields: [createdByUserId], references: [id])
+  payrolls  Payroll[]
+}
+
+enum PayrollStatus {
+  DRAFT
+  SUBMITTED
+  CONFIRMED
+  PAID
+  REJECTED
+}
+
+model Payroll {
+  id                   String           @id @default(uuid())
+  salaryCycleId        String
+  userId               String
+  snapshotProfileJson  Json
+  baseSalaryHkd        Float
+  overtimeHkd          Float            @default(0)
+  bonusHkd             Float            @default(0)
+  commissionHkd        Float            @default(0)
+  allowanceTotalHkd    Float            @default(0)
+  deductionTotalHkd    Float            @default(0)
+  grossTotalHkd        Float
+  netPayableHkd        Float
+  currency             String           @default("HKD")
+  status               PayrollStatus    @default(DRAFT)
+  adminNote            String?
+  employeeNote         String?
+  submittedAt          DateTime?
+  confirmedAt          DateTime?
+  rejectedAt           DateTime?
+  revisedAt            DateTime?
+  paidAt               DateTime?
+  submittedByUserId    String?
+  paidByUserId         String?
+  paidReference        String?
+  paidAttachmentId     String?
+  pdfGeneratedAt       DateTime?
+  pdfAttachmentId      String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  cycle           SalaryCycle  @relation(fields: [salaryCycleId], references: [id], onDelete: Cascade)
+  user            User         @relation("UserPayrolls", fields: [userId], references: [id], onDelete: Cascade)
+  submittedBy     User?        @relation("AdminSubmittedPayrolls", fields: [submittedByUserId], references: [id])
+  paidBy          User?        @relation("AdminPaidPayrolls", fields: [paidByUserId], references: [id])
+  paidAttachment  Attachment?  @relation("PaidReceiptAttachments")
+  pdfAttachment   Attachment?  @relation("PdfPayrollAttachments")
+  items           PayrollItem[]
+}
+
+model PayrollItem {
+  id          String   @id @default(uuid())
+  payrollId   String
+  itemType    String // "EARNING" | "DEDUCTION"
+  itemCode    String // "BASE_SALARY" | "OVERTIME" | "BONUS_ANNUAL" | ...
+  itemName    String // 顯示給使用者 / PDF 抬頭
+  sourceText  String?  // 可追溯 source_text
+  unitCount   Float?   // 數量 (e.g. 12 小時加班)
+  unitRateHkd Float?   // 單價 (e.g. 時薪 140)
+  amountHkd   Float    // 正數; DEDUCTION 存正數, 彙總時減
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  payroll Payroll @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+}
+
+
+
+model RecurringTemplate {
+  id              String   @id @default(uuid())
+  type            String // INCOME | EXPENSE
+  title           String
+  note            String?
+  amount          Float
+  intervalMonths  Int      @default(1) // every N months
+  dayOfMonth      Int // preferred day; clamped to month end
+  nextDueDate     DateTime
+  reminderDays    Int      @default(15)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  userId          String
+  categoryId      String
+  subCategoryId   String?
+  thirdCategoryId String?
+  poolId          String?
+  sourceContractId String?
+
+  user          User         @relation("UserRecurringTemplates", fields: [userId], references: [id])
+  category      Category     @relation("CategoryRecurringTemplates", fields: [categoryId], references: [id])
+  subCategory   Category?    @relation("SubCategoryRecurringTemplates", fields: [subCategoryId], references: [id])
+  thirdCategory Category?    @relation("ThirdCategoryRecurringTemplates", fields: [thirdCategoryId], references: [id])
+  pool          CapitalPool? @relation("CapitalPoolRecurringTemplates", fields: [poolId], references: [id])
+  instances     RecurringInstance[]
+}
+
+model RecurringInstance {
+  id           String   @id @default(uuid())
+  dueDate      DateTime
+  status       String   @default("OPEN") // OPEN | CONVERTED | SKIPPED
+  amount       Float?
+  note         String?
+  processedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  templateId String
+  userId     String
+
+  template    RecurringTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user        User              @relation("UserRecurringInstances", fields: [userId], references: [id])
+  attachments Attachment[]      @relation("RecurringInstanceAttachments")
+
+  @@unique([templateId, dueDate])
+  @@index([status, dueDate])
+}
