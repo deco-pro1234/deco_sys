@@ -13,8 +13,14 @@ deco Production Limited 财务收支记录系统（由 SK11 Finance / FINNE18 �
 仓库已含根目录 `Dockerfile` + `railway.toml`，以及 `cron-worker/` 提醒服务。
 
 1. 打开 [Railway](https://railway.app) → **New Project** → **Deploy from GitHub repo** → 选择 `deco-pro1234/deco_sys`（分支 `main`）。
-2. **Add PostgreSQL** 插件；将 `DATABASE_URL` 引用到 Web 服务。
-3. Web 服务环境变量（Variables）：
+2. **Add PostgreSQL** 插件；Postgres 需显示 Online。
+3. **把数据库接到 Web 服务（必做，否则会 Crash）**  
+   打开 `deco_sys` → **Variables** → **Add Variable** / **Variable Reference**：
+   - Name：`DATABASE_URL`
+   - Value：`${{Postgres.DATABASE_URL}}`  
+     （若数据库服务不叫 `Postgres`，改成实际服务名）  
+   也可在 Postgres 卡片上 Connect / share variables 到 `deco_sys`。
+4. Web 服务再设置：
    ```env
    JWT_SECRET=<长随机串>
    PWD_SALT=<长随机串>
@@ -23,9 +29,9 @@ deco Production Limited 财务收支记录系统（由 SK11 Finance / FINNE18 �
    APP_BASE_URL=https://<你的域名>.up.railway.app
    ```
    （可选）`RESEND_*`、`REMINDER_EMAILS`、WhatsApp / OCR 变量，见 `.env.example`。
-4. **Settings → Networking** 生成公网域名；把同一值写回 `APP_BASE_URL`。
-5. 部署成功后访问：`https://<域名>/api/init?secret=<INIT_SECRET>` 建立管理员，再打开 `/login`。
-6. （可选）同项目再建服务，**Root Directory = `cron-worker`**，配置：
+5. **Settings → Networking** 生成公网域名；把同一值写回 `APP_BASE_URL`，然后 **Redeploy**。
+6. 部署成功后访问：`https://<域名>/api/init?secret=<INIT_SECRET>` 建立管理员，再打开 `/login`。
+7. （可选）同项目再建服务，**Root Directory = `cron-worker`**，配置：
    ```env
    APP_BASE_URL=<与网站相同>
    CRON_SECRET=<与网站相同>
