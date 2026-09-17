@@ -3,8 +3,34 @@ const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const { spawnSync } = require('child_process');
 
-const prisma = new PrismaClient();
 const APP_ROOT = path.resolve(__dirname, '..');
+
+function requireDatabaseUrl() {
+  const url = process.env.DATABASE_URL;
+  if (url && String(url).trim()) return String(url).trim();
+
+  console.error('[bootstrap] FATAL: DATABASE_URL is missing.');
+  console.error(
+    '[bootstrap] On Railway: open deco_sys → Variables → Add Variable →',
+  );
+  console.error(
+    '[bootstrap]   Name: DATABASE_URL',
+  );
+  console.error(
+    '[bootstrap]   Value: ${{Postgres.DATABASE_URL}}',
+  );
+  console.error(
+    '[bootstrap] (If your DB service is not named "Postgres", use that service name instead.)',
+  );
+  console.error(
+    '[bootstrap] Then Redeploy. Do not start without a Postgres connection string.',
+  );
+  process.exit(1);
+}
+
+requireDatabaseUrl();
+
+const prisma = new PrismaClient();
 
 const LEGACY_MIGRATIONS = [
   '20260812143457_init',
