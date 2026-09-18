@@ -1,11 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
+import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import {
   addProjectMemo,
+  addProjectTaskMemo,
   createProjectLedgerEntry,
   createProjectTask,
   deleteProject,
@@ -17,6 +19,37 @@ import {
 } from '../actions/project'
 
 type Candidate = { id: string; roleName: string; email: string; isAdmin: boolean }
+
+type TaskMemo = {
+  id: string
+  content: string
+  createdAt: string | Date
+  author?: { roleName?: string | null } | null
+  attachments?: Array<{
+    id: string
+    fileUrl: string
+    note?: string | null
+    size?: number
+    createdAt?: string | Date
+  }>
+}
+
+type ProjectTask = {
+  id: string
+  title: string
+  status: string
+  dueDate?: string | Date | null
+  reminderDays: number
+  note?: string | null
+  assigneeId?: string | null
+  assignee?: { id?: string; roleName?: string | null } | null
+  assignees?: Array<{
+    userId: string
+    user?: { id: string; roleName?: string | null; email?: string | null } | null
+  }>
+  createdBy?: { roleName?: string | null } | null
+  memos?: TaskMemo[]
+}
 
 type ProjectDetail = {
   id: string
@@ -34,17 +67,7 @@ type ProjectDetail = {
     role: string
     user?: { id: string; roleName?: string | null; email?: string | null } | null
   }>
-  tasks: Array<{
-    id: string
-    title: string
-    status: string
-    dueDate?: string | Date | null
-    reminderDays: number
-    note?: string | null
-    assigneeId?: string | null
-    assignee?: { roleName?: string | null } | null
-    createdBy?: { roleName?: string | null } | null
-  }>
+  tasks: ProjectTask[]
   ledger: Array<{
     id: string
     type: string
@@ -76,6 +99,20 @@ function dayInput(value?: string | Date | null) {
   return d.toISOString().slice(0, 10)
 }
 
+function getTaskAssigneeIds(task: ProjectTask) {
+  if (task.assignees && task.assignees.length > 0) {
+    return task.assignees.map((a) => a.userId)
+  }
+  return task.assigneeId ? [task.assigneeId] : []
+}
+
+function taskAssigneeNames(task: ProjectTask) {
+  if (task.assignees && task.assignees.length > 0) {
+    return task.assignees.map((a) => a.user?.roleName || a.userId).join(', ')
+  }
+  return task.assignee?.roleName || ''
+}
+
 export default function ProjectDetailClient({
   locale,
   isAdmin,
@@ -95,7 +132,10 @@ export default function ProjectDetailClient({
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskDue, setTaskDue] = useState('')
-  const [taskAssignee, setTaskAssignee] = useState('')
+  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [taskMemoDraft, setTaskMemoDraft] = useState('')
+  const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
@@ -104,6 +144,10 @@ export default function ProjectDetailClient({
 
   const [memo, setMemo] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setMemberIds(project.members.map((m) => m.userId))
+  }, [project.members])
 
   const summary = useMemo(() => {
     const income = project.ledger
@@ -144,6 +188,36 @@ export default function ProjectDetailClient({
     }
     router.refresh()
     return true
+  }
+
+  const toggleCreateAssignee = (id: string) => {
+    setTaskAssigneeIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  const handleMemoFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const result = await prepareAttachments(file)
+      if (result.truncated) {
+        alert(
+          t('pdfPagesTruncated')
+            .replace('{{total}}', String(result.totalPages))
+            .replace('{{max}}', String(MAX_PDF_PAGES))
+        )
+      }
+      setTaskMemoFiles((prev) => [...prev, ...result.attachments])
+    } catch {
+      try {
+        const fallback = await compressImage(file, 200)
+        setTaskMemoFiles((prev) => [...prev, fallback])
+      } catch {
+        alert(t('submitFailed'))
+      }
+    }
+    event.target.value = ''
   }
 
   return (
@@ -210,25 +284,30 @@ export default function ProjectDetailClient({
               placeholder={t('projectTaskTitlePlaceholder')}
               className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
             />
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <input
-                type="date"
-                value={taskDue}
-                onChange={(e) => setTaskDue(e.target.value)}
-                className="rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              />
-              <select
-                value={taskAssignee}
-                onChange={(e) => setTaskAssignee(e.target.value)}
-                className="rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              >
-                <option value="">{t('projectAssigneeOptional')}</option>
+            <input
+              type="date"
+              value={taskDue}
+              onChange={(e) => setTaskDue(e.target.value)}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+            <div>
+              <div className="mb-2 text-xs font-medium text-gray-500">{t('projectTaskAssignees')}</div>
+              <div className="flex flex-wrap gap-2">
                 {project.members.map((m) => (
-                  <option key={m.userId} value={m.userId}>
+                  <button
+                    key={m.userId}
+                    type="button"
+                    onClick={() => toggleCreateAssignee(m.userId)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                      taskAssigneeIds.includes(m.userId)
+                        ? 'bg-[#007AFF] text-white'
+                        : 'bg-[#F2F2F7] text-gray-600'
+                    }`}
+                  >
                     {m.user?.roleName || m.userId}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
             <button
               type="button"
@@ -238,13 +317,13 @@ export default function ProjectDetailClient({
                   createProjectTask(project.id, {
                     title: taskTitle,
                     dueDate: taskDue || null,
-                    assigneeId: taskAssignee || null,
+                    assigneeIds: taskAssigneeIds,
                   })
                 )
                 if (ok) {
                   setTaskTitle('')
                   setTaskDue('')
-                  setTaskAssignee('')
+                  setTaskAssigneeIds([])
                 }
               }}
               className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
@@ -257,51 +336,203 @@ export default function ProjectDetailClient({
             {project.tasks.length === 0 ? (
               <div className="py-6 text-center text-sm text-gray-400">{t('projectTaskEmpty')}</div>
             ) : (
-              project.tasks.map((task) => (
-                <div key={task.id} className="flex items-start justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <div className="font-medium text-gray-900">{task.title}</div>
-                    <div className="mt-1 text-xs text-gray-500">
-                      {taskStatusLabel(task.status)}
-                      {task.dueDate ? ` · ${dayInput(task.dueDate)}` : ''}
-                      {task.assignee?.roleName ? ` · ${task.assignee.roleName}` : ''}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    {task.status !== 'DONE' ? (
+              project.tasks.map((task) => {
+                const expanded = expandedTaskId === task.id
+                const names = taskAssigneeNames(task)
+                return (
+                  <div key={task.id} className="py-3">
+                    <div className="flex items-start justify-between gap-3">
                       <button
                         type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          run(() =>
-                            updateProjectTask(task.id, {
-                              title: task.title,
-                              status: task.status === 'TODO' ? 'DOING' : 'DONE',
-                              dueDate: dayInput(task.dueDate) || null,
-                              reminderDays: task.reminderDays,
-                              note: task.note || undefined,
-                              assigneeId: task.assigneeId,
-                            })
-                          )
-                        }
-                        className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => {
+                          setExpandedTaskId(expanded ? null : task.id)
+                          setTaskMemoDraft('')
+                          setTaskMemoFiles([])
+                        }}
                       >
-                        {task.status === 'TODO' ? t('projectTaskStart') : t('projectTaskComplete')}
+                        <div className="font-medium text-gray-900">{task.title}</div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          {taskStatusLabel(task.status)}
+                          {task.dueDate ? ` · ${dayInput(task.dueDate)}` : ''}
+                          {names ? ` · ${names}` : ''}
+                          {task.memos && task.memos.length > 0
+                            ? ` · ${t('projectTaskMemoCount').replace('{{count}}', String(task.memos.length))}`
+                            : ''}
+                        </div>
                       </button>
+                      <div className="flex shrink-0 gap-1">
+                        {task.status !== 'DONE' ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              run(() =>
+                                updateProjectTask(task.id, {
+                                  title: task.title,
+                                  status: task.status === 'TODO' ? 'DOING' : 'DONE',
+                                  dueDate: dayInput(task.dueDate) || null,
+                                  reminderDays: task.reminderDays,
+                                  note: task.note || undefined,
+                                  assigneeIds: getTaskAssigneeIds(task),
+                                })
+                              )
+                            }
+                            className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700"
+                          >
+                            {task.status === 'TODO' ? t('projectTaskStart') : t('projectTaskComplete')}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            if (confirm(t('confirmDeleteItem'))) run(() => deleteProjectTask(task.id))
+                          }}
+                          className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                        >
+                          {t('delete')}
+                        </button>
+                      </div>
+                    </div>
+
+                    {expanded ? (
+                      <div className="mt-3 space-y-3 rounded-2xl bg-[#F8FAFC] p-3">
+                        <div>
+                          <div className="mb-2 text-xs font-medium text-gray-500">
+                            {t('projectTaskAssignees')}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {project.members.map((m) => {
+                              const selected = getTaskAssigneeIds(task).includes(m.userId)
+                              return (
+                                <button
+                                  key={m.userId}
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    const next = selected
+                                      ? getTaskAssigneeIds(task).filter((id) => id !== m.userId)
+                                      : [...getTaskAssigneeIds(task), m.userId]
+                                    run(() =>
+                                      updateProjectTask(task.id, {
+                                        title: task.title,
+                                        status: task.status as any,
+                                        dueDate: dayInput(task.dueDate) || null,
+                                        reminderDays: task.reminderDays,
+                                        note: task.note || undefined,
+                                        assigneeIds: next,
+                                      })
+                                    )
+                                  }}
+                                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                                    selected
+                                      ? 'bg-[#007AFF] text-white'
+                                      : 'bg-white text-gray-600 shadow-sm'
+                                  }`}
+                                >
+                                  {m.user?.roleName || m.userId}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-gray-500">
+                            {t('projectTaskMemos')}
+                          </div>
+                          {(task.memos || []).length === 0 ? (
+                            <div className="text-xs text-gray-400">{t('projectTaskMemoEmpty')}</div>
+                          ) : (
+                            (task.memos || []).map((m) => (
+                              <div key={m.id} className="rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                                <div className="text-xs text-gray-400">
+                                  {m.author?.roleName || '—'} · {dayInput(m.createdAt)}
+                                </div>
+                                <div className="mt-1 whitespace-pre-wrap text-gray-800">{m.content}</div>
+                                {m.attachments && m.attachments.length > 0 ? (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {m.attachments.map((att, idx) => (
+                                      <button
+                                        key={att.id}
+                                        type="button"
+                                        onClick={() => openAttachment(att.fileUrl)}
+                                        className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                                      >
+                                        {att.note || `${t('attachment')} ${idx + 1}`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <textarea
+                          value={taskMemoDraft}
+                          onChange={(e) => setTaskMemoDraft(e.target.value)}
+                          rows={3}
+                          placeholder={t('projectTaskMemoPlaceholder')}
+                          className="w-full rounded-xl border border-gray-100 bg-white px-3 py-2 text-sm outline-none"
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="cursor-pointer rounded-lg bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-sm">
+                            {t('addAttachment')}
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              className="hidden"
+                              onChange={handleMemoFiles}
+                            />
+                          </label>
+                          {taskMemoFiles.map((f, idx) => (
+                            <span
+                              key={`${f.url.slice(0, 24)}-${idx}`}
+                              className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] text-[#4338CA]"
+                            >
+                              {f.note || `${t('attachment')} ${idx + 1}`}
+                              <button
+                                type="button"
+                                className="ml-1 font-bold"
+                                onClick={() =>
+                                  setTaskMemoFiles((prev) => prev.filter((_, i) => i !== idx))
+                                }
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={busy || (!taskMemoDraft.trim() && taskMemoFiles.length === 0)}
+                          onClick={async () => {
+                            const ok = await run(() =>
+                              addProjectTaskMemo(task.id, {
+                                content: taskMemoDraft,
+                                attachments: taskMemoFiles.map((f) => ({
+                                  url: f.url,
+                                  size: f.size,
+                                  note: f.note,
+                                })),
+                              })
+                            )
+                            if (ok) {
+                              setTaskMemoDraft('')
+                              setTaskMemoFiles([])
+                            }
+                          }}
+                          className="w-full rounded-xl bg-[#007AFF] py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {t('appendProjectTaskMemo')}
+                        </button>
+                      </div>
                     ) : null}
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        if (confirm(t('confirmDeleteItem'))) run(() => deleteProjectTask(task.id))
-                      }}
-                      className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
-                    >
-                      {t('delete')}
-                    </button>
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>

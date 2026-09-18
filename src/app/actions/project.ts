@@ -25,6 +25,24 @@ const projectInclude = {
     include: {
       createdBy: { select: { id: true, roleName: true } },
       assignee: { select: { id: true, roleName: true } },
+      assignees: {
+        include: { user: { select: { id: true, roleName: true, email: true } } },
+        orderBy: { createdAt: 'asc' as const },
+      },
+      memos: {
+        orderBy: { createdAt: 'desc' as const },
+        include: {
+          author: { select: { roleName: true } },
+          attachments: {
+            orderBy: { createdAt: 'desc' as const },
+            include: { uploader: { select: { roleName: true } } },
+          },
+        },
+      },
+      attachments: {
+        orderBy: { createdAt: 'desc' as const },
+        include: { uploader: { select: { roleName: true } } },
+      },
     },
   },
   ledger: {
@@ -319,6 +337,7 @@ export async function createProjectTask(
     reminderDays?: number
     note?: string
     assigneeId?: string | null
+    assigneeIds?: string[]
   }
 ) {
   try {
@@ -328,17 +347,38 @@ export async function createProjectTask(
     const title = String(input.title || '').trim()
     if (!title) return { success: false, error: t('projectTaskTitleRequired') }
 
-    await prisma.projectTask.create({
-      data: {
-        projectId,
-        title,
-        status: input.status || 'TODO',
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        reminderDays: Number(input.reminderDays ?? 7) || 7,
-        note: input.note?.trim() || null,
-        assigneeId: input.assigneeId || null,
-        createdById: session.userId,
-      },
+    const assigneeIds = Array.from(
+      new Set(
+        [
+          ...(input.assigneeIds || []),
+          ...(input.assigneeId ? [input.assigneeId] : []),
+        ].filter(Boolean)
+      )
+    )
+
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.projectTask.create({
+        data: {
+          projectId,
+          title,
+          status: input.status || 'TODO',
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          reminderDays: Number(input.reminderDays ?? 7) || 7,
+          note: input.note?.trim() || null,
+          assigneeId: assigneeIds[0] || null,
+          createdById: session.userId,
+        },
+      })
+
+      if (assigneeIds.length > 0) {
+        await tx.projectTaskAssignee.createMany({
+          data: assigneeIds.map((userId) => ({
+            taskId: created.id,
+            userId,
+          })),
+          skipDuplicates: true,
+        })
+      }
     })
     revalidateProjects(projectId)
     return { success: true }
@@ -356,6 +396,7 @@ export async function updateProjectTask(
     reminderDays?: number
     note?: string
     assigneeId?: string | null
+    assigneeIds?: string[]
   }
 ) {
   try {
@@ -368,16 +409,49 @@ export async function updateProjectTask(
     const title = String(input.title || '').trim()
     if (!title) return { success: false, error: t('projectTaskTitleRequired') }
 
-    await prisma.projectTask.update({
-      where: { id: taskId },
-      data: {
-        title,
-        status: input.status,
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        reminderDays: Number(input.reminderDays ?? 7) || 7,
-        note: input.note?.trim() || null,
-        assigneeId: input.assigneeId || null,
-      },
+    const assigneeIds =
+      input.assigneeIds !== undefined
+        ? Array.from(new Set(input.assigneeIds.filter(Boolean)))
+        : input.assigneeId
+          ? [input.assigneeId]
+          : undefined
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectTask.update({
+        where: { id: taskId },
+        data: {
+          title,
+          status: input.status,
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          reminderDays: Number(input.reminderDays ?? 7) || 7,
+          note: input.note?.trim() || null,
+          ...(assigneeIds
+            ? { assigneeId: assigneeIds[0] || null }
+            : input.assigneeId !== undefined
+              ? { assigneeId: input.assigneeId || null }
+              : {}),
+        },
+      })
+
+      if (assigneeIds) {
+        if (assigneeIds.length === 0) {
+          await tx.projectTaskAssignee.deleteMany({ where: { taskId } })
+        } else {
+          await tx.projectTaskAssignee.deleteMany({
+            where: {
+              taskId,
+              userId: { notIn: assigneeIds },
+            },
+          })
+          for (const userId of assigneeIds) {
+            await tx.projectTaskAssignee.upsert({
+              where: { taskId_userId: { taskId, userId } },
+              update: {},
+              create: { taskId, userId },
+            })
+          }
+        }
+      }
     })
     revalidateProjects(task.projectId)
     return { success: true }
@@ -470,6 +544,65 @@ export async function addProjectMemo(projectId: string, content: string) {
       },
     })
     revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+type AttachmentPayload = {
+  url: string
+  size: number
+  note?: string
+}
+
+export async function addProjectTaskMemo(
+  taskId: string,
+  input: {
+    content: string
+    attachments?: AttachmentPayload[]
+  }
+) {
+  try {
+    const task = await prisma.projectTask.findUnique({ where: { id: taskId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!task) return { success: false, error: t('projectTaskNotFound') }
+    const { session } = await assertProjectMember(task.projectId)
+
+    const text = String(input.content || '').trim()
+    const attachments = input.attachments || []
+    if (!text && attachments.length === 0) {
+      return { success: false, error: t('memoRequired') }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const memo = await tx.memo.create({
+        data: {
+          content: text || t('projectTaskAttachmentMemo'),
+          authorId: session.userId,
+          projectId: task.projectId,
+          projectTaskId: taskId,
+        },
+      })
+
+      for (const item of attachments) {
+        if (!item?.url) continue
+        await tx.attachment.create({
+          data: {
+            fileUrl: item.url,
+            size: Number(item.size) || 0,
+            note: item.note || null,
+            uploaderId: session.userId,
+            projectId: task.projectId,
+            projectTaskId: taskId,
+            memoId: memo.id,
+          },
+        })
+      }
+    })
+
+    revalidateProjects(task.projectId)
     return { success: true }
   } catch (e: any) {
     return { success: false, error: e.message }
