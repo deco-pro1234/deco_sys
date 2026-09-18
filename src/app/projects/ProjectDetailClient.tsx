@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
@@ -136,6 +136,10 @@ export default function ProjectDetailClient({
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const [taskMemoDraft, setTaskMemoDraft] = useState('')
   const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
+  /** Optimistic assignee sets while router.refresh() catches up */
+  const [assigneeOverrides, setAssigneeOverrides] = useState<Record<string, string[]>>({})
+  const assigneeOverridesRef = useRef(assigneeOverrides)
+  assigneeOverridesRef.current = assigneeOverrides
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
@@ -148,6 +152,23 @@ export default function ProjectDetailClient({
   useEffect(() => {
     setMemberIds(project.members.map((m) => m.userId))
   }, [project.members])
+
+  useEffect(() => {
+    setAssigneeOverrides((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const task of project.tasks) {
+        const override = next[task.id]
+        if (!override) continue
+        const server = getTaskAssigneeIds(task).slice().sort().join(',')
+        if (server === override.slice().sort().join(',')) {
+          delete next[task.id]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [project.tasks])
 
   const summary = useMemo(() => {
     const income = project.ledger
@@ -417,16 +438,22 @@ export default function ProjectDetailClient({
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {project.members.map((m) => {
-                              const selected = getTaskAssigneeIds(task).includes(m.userId)
+                              const currentIds =
+                                assigneeOverrides[task.id] ?? getTaskAssigneeIds(task)
+                              const selected = currentIds.includes(m.userId)
                               return (
                                 <button
                                   key={m.userId}
                                   type="button"
                                   disabled={busy}
                                   onClick={() => {
+                                    const base =
+                                      assigneeOverridesRef.current[task.id] ??
+                                      getTaskAssigneeIds(task)
                                     const next = selected
-                                      ? getTaskAssigneeIds(task).filter((id) => id !== m.userId)
-                                      : [...getTaskAssigneeIds(task), m.userId]
+                                      ? base.filter((id) => id !== m.userId)
+                                      : [...base, m.userId]
+                                    setAssigneeOverrides((prev) => ({ ...prev, [task.id]: next }))
                                     run(() =>
                                       updateProjectTask(task.id, {
                                         title: task.title,
@@ -436,7 +463,15 @@ export default function ProjectDetailClient({
                                         note: task.note || undefined,
                                         assigneeIds: next,
                                       })
-                                    )
+                                    ).then((ok) => {
+                                      if (!ok) {
+                                        setAssigneeOverrides((prev) => {
+                                          const copy = { ...prev }
+                                          delete copy[task.id]
+                                          return copy
+                                        })
+                                      }
+                                    })
                                   }}
                                   className={`rounded-full px-3 py-1 text-xs font-medium ${
                                     selected
