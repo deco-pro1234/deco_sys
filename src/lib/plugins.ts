@@ -1,4 +1,4 @@
-export type PluginId = 'matters' | 'contracts' | 'payroll' | 'recurring'
+export type PluginId = 'matters' | 'contracts' | 'payroll' | 'recurring' | 'projects'
 
 export type PluginFlags = Record<PluginId, boolean>
 
@@ -7,6 +7,7 @@ export const PLUGIN_SETTING_KEYS: Record<PluginId, string> = {
   contracts: 'plugin.contracts',
   payroll: 'plugin.payroll',
   recurring: 'plugin.recurring',
+  projects: 'plugin.projects',
 }
 
 export const DEFAULT_PLUGIN_FLAGS: PluginFlags = {
@@ -14,6 +15,7 @@ export const DEFAULT_PLUGIN_FLAGS: PluginFlags = {
   contracts: true,
   payroll: true,
   recurring: true,
+  projects: true,
 }
 
 export const PLUGIN_META: Record<
@@ -39,6 +41,11 @@ export const PLUGIN_META: Record<
     routePrefixes: ['/recurring'],
     zhLabel: '恆常收支',
     enLabel: 'Recurring',
+  },
+  projects: {
+    routePrefixes: ['/projects'],
+    zhLabel: '項目',
+    enLabel: 'Projects',
   },
 }
 

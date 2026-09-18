@@ -43,6 +43,11 @@ model User {
   recurringTemplates RecurringTemplate[] @relation("UserRecurringTemplates")
   recurringInstances RecurringInstance[] @relation("UserRecurringInstances")
   whatsappBindings   WhatsAppBinding[]   @relation("UserWhatsAppBindings")
+  projectsOwned      Project[]           @relation("UserOwnedProjects")
+  projectMemberships ProjectMember[]     @relation("UserProjectMemberships")
+  projectTasksAssigned ProjectTask[]     @relation("UserAssignedProjectTasks")
+  projectTasksCreated  ProjectTask[]     @relation("UserCreatedProjectTasks")
+  projectLedgerEntries ProjectLedgerEntry[] @relation("UserProjectLedgerEntries")
 }
 
 model Category {
@@ -210,6 +215,8 @@ model Attachment {
   privateRecordId String?
   contractId String?
   activityId String?
+  projectId String?
+  projectTaskId String?
   payrollPaidId String? @unique
   payrollPdfId  String? @unique
   recurringInstanceId String?
@@ -221,6 +228,8 @@ model Attachment {
   privateRecord PrivateRecord? @relation("PrivateRecordAttachments", fields: [privateRecordId], references: [id])
   contract      Contract?     @relation("ContractAttachments", fields: [contractId], references: [id])
   activity      Activity?     @relation("ActivityAttachments", fields: [activityId], references: [id])
+  project       Project?      @relation("ProjectAttachments", fields: [projectId], references: [id])
+  projectTask   ProjectTask?  @relation("ProjectTaskAttachments", fields: [projectTaskId], references: [id])
   payrollPaid   Payroll?      @relation("PaidReceiptAttachments", fields: [payrollPaidId], references: [id])
   payrollPdf    Payroll?      @relation("PdfPayrollAttachments", fields: [payrollPdfId], references: [id])
   recurringInstance RecurringInstance? @relation("RecurringInstanceAttachments", fields: [recurringInstanceId], references: [id])
@@ -238,6 +247,8 @@ model Memo {
   contractId      String?
   privateRecordId String?
   activityId      String?
+  projectId       String?
+  projectTaskId   String?
 
   // 关系
   author        User           @relation("UserMemos", fields: [authorId], references: [id])
@@ -245,6 +256,8 @@ model Memo {
   contract      Contract?      @relation("ContractMemos", fields: [contractId], references: [id])
   privateRecord PrivateRecord? @relation("PrivateRecordMemos", fields: [privateRecordId], references: [id])
   activity      Activity?      @relation("ActivityMemos", fields: [activityId], references: [id])
+  project       Project?       @relation("ProjectMemos", fields: [projectId], references: [id])
+  projectTask   ProjectTask?   @relation("ProjectTaskMemos", fields: [projectTaskId], references: [id])
 }
 
 model SystemSetting {
@@ -462,4 +475,88 @@ model RecurringInstance {
 
   @@unique([templateId, dueDate])
   @@index([status, dueDate])
+}
+
+// ===== Projects plugin (independent from global Activity/matters) =====
+
+model Project {
+  id           String   @id @default(uuid())
+  title        String
+  status       String   @default("PLANNING") // PLANNING | ACTIVE | DONE | ARCHIVED
+  startDate    DateTime?
+  endDate      DateTime?
+  reminderDays Int      @default(15)
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownerId String
+  owner   User   @relation("UserOwnedProjects", fields: [ownerId], references: [id])
+
+  members  ProjectMember[]
+  tasks    ProjectTask[]
+  ledger   ProjectLedgerEntry[]
+  attachments Attachment[] @relation("ProjectAttachments")
+  memos       Memo[]       @relation("ProjectMemos")
+
+  @@index([status, endDate])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  role      String   @default("MEMBER") // OWNER | MEMBER
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectId String
+  userId    String
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation("UserProjectMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectTask {
+  id           String   @id @default(uuid())
+  title        String
+  status       String   @default("TODO") // TODO | DOING | DONE
+  dueDate      DateTime?
+  reminderDays Int      @default(7)
+  note         String?
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  projectId    String
+  createdById  String
+  assigneeId   String?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("UserCreatedProjectTasks", fields: [createdById], references: [id])
+  assignee  User?   @relation("UserAssignedProjectTasks", fields: [assigneeId], references: [id])
+
+  attachments Attachment[] @relation("ProjectTaskAttachments")
+  memos       Memo[]       @relation("ProjectTaskMemos")
+
+  @@index([projectId, status, dueDate])
+}
+
+model ProjectLedgerEntry {
+  id        String   @id @default(uuid())
+  type      String // INCOME | EXPENSE
+  amount    Float // HKD, always positive; sign inferred from type
+  date      DateTime
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectId   String
+  createdById String
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("UserProjectLedgerEntries", fields: [createdById], references: [id])
+
+  @@index([projectId, date])
 }

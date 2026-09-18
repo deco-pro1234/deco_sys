@@ -1368,6 +1368,7 @@ function PluginsTab({ initialFlags, locale }: { initialFlags: PluginFlags; local
     { key: 'contracts', label: t('pluginContracts') },
     { key: 'payroll', label: t('pluginPayroll') },
     { key: 'recurring', label: t('pluginRecurring') },
+    { key: 'projects', label: t('pluginProjects') },
   ];
 
   return (

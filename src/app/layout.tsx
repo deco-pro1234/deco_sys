@@ -5,6 +5,7 @@ import { getSession } from "./actions/auth";
 import { getPendingReviewCount } from "./actions/review";
 import { getActivityReminderItems, getContractReminderItems, type ReminderItem } from "./actions/reminder";
 import { getRecurringReminderItems } from "./actions/recurring";
+import { getProjectReminderItems } from "./actions/project";
 import { getPluginFlags } from "./actions/settings";
 import { DEFAULT_PLUGIN_FLAGS } from "@/lib/plugins";
 import TopNav from "./TopNav";
@@ -47,16 +48,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     contracts: ReminderItem[];
     activities: ReminderItem[];
     recurring: ReminderItem[];
+    projects: ReminderItem[];
     contractCount: number;
     activityCount: number;
     recurringCount: number;
+    projectCount: number;
   } = {
     contracts: [],
     activities: [],
     recurring: [],
+    projects: [],
     contractCount: 0,
     activityCount: 0,
     recurringCount: 0,
+    projectCount: 0,
   };
 
   try {
@@ -74,27 +79,32 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
   if (session) {
     try {
-      const [contracts, activities, recurring] = await Promise.all([
+      const [contracts, activities, recurring, projects] = await Promise.all([
         pluginFlags.contracts ? getContractReminderItems() : Promise.resolve([] as ReminderItem[]),
         pluginFlags.matters ? getActivityReminderItems() : Promise.resolve([] as ReminderItem[]),
         pluginFlags.recurring ? getRecurringReminderItems() : Promise.resolve([] as ReminderItem[]),
+        pluginFlags.projects ? getProjectReminderItems() : Promise.resolve([] as ReminderItem[]),
       ])
       reminderOverview = {
         contracts,
         activities,
         recurring: recurring as ReminderItem[],
+        projects,
         contractCount: contracts.length,
         activityCount: activities.length,
         recurringCount: (recurring as ReminderItem[]).length,
+        projectCount: projects.length,
       }
     } catch (_e) {
       reminderOverview = {
         contracts: [],
         activities: [],
         recurring: [],
+        projects: [],
         contractCount: 0,
         activityCount: 0,
         recurringCount: 0,
+        projectCount: 0,
       }
     }
   }
@@ -112,6 +122,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               contractReminderCount={reminderOverview.contractCount}
               activityReminderCount={reminderOverview.activityCount}
               recurringReminderCount={reminderOverview.recurringCount}
+              projectReminderCount={reminderOverview.projectCount}
               pluginFlags={pluginFlags}
               locale={locale}
             />
@@ -123,6 +134,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             contracts={reminderOverview.contracts}
             activities={reminderOverview.activities}
             recurring={reminderOverview.recurring}
+            projects={reminderOverview.projects}
           />
         )}
         <div className="flex-1 max-w-4xl mx-auto w-full px-4 pb-10 mobile-safe-pb sm:px-0 sm:pb-10">

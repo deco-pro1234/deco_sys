@@ -39,6 +39,7 @@ export default function TopNav({
   contractReminderCount = 0,
   activityReminderCount = 0,
   recurringReminderCount = 0,
+  projectReminderCount = 0,
   pluginFlags,
   locale,
 }: {
@@ -47,6 +48,7 @@ export default function TopNav({
   contractReminderCount?: number
   activityReminderCount?: number
   recurringReminderCount?: number
+  projectReminderCount?: number
   pluginFlags: PluginFlags
   locale: Locale
 }) {
@@ -65,6 +67,10 @@ export default function TopNav({
 
   if (pluginFlags.matters) {
     primaryNavItems.push({ name: t('activities'), href: '/activities', count: activityReminderCount })
+  }
+
+  if (pluginFlags.projects) {
+    primaryNavItems.push({ name: t('projects'), href: '/projects', count: projectReminderCount })
   }
 
   if (hasPublicLedgerAccess(session) && pluginFlags.recurring) {
