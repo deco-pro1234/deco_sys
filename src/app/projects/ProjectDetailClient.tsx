@@ -10,6 +10,7 @@ import {
   addProjectTaskMemo,
   createProjectLedgerEntry,
   createProjectTask,
+  createProjectTempAccount,
   deleteProject,
   deleteProjectLedgerEntry,
   deleteProjectTask,
@@ -20,7 +21,14 @@ import {
   updateProjectTask,
 } from '../actions/project'
 
-type Candidate = { id: string; roleName: string; email: string; isAdmin: boolean }
+type Candidate = {
+  id: string
+  roleName: string
+  email: string
+  isAdmin: boolean
+  accountKind?: string
+  loginPhone?: string | null
+}
 
 type TaskMemo = {
   id: string
@@ -108,6 +116,7 @@ type Props = {
   isAdmin: boolean
   project: ProjectDetail
   memberCandidates: Candidate[]
+  tempAccountCandidates?: Candidate[]
 }
 
 type TempGrantDraft = {
@@ -141,6 +150,7 @@ export default function ProjectDetailClient({
   isAdmin,
   project,
   memberCandidates,
+  tempAccountCandidates = [],
 }: Props) {
   const t = createTranslator(locale)
   const router = useRouter()
@@ -183,10 +193,10 @@ export default function ProjectDetailClient({
   )
   const tempCandidates = useMemo(
     () =>
-      memberCandidates.filter(
+      tempAccountCandidates.filter(
         (u) => u.id !== project.ownerId && !memberIdSet.has(u.id)
       ),
-    [memberCandidates, memberIdSet, project.ownerId]
+    [tempAccountCandidates, memberIdSet, project.ownerId]
   )
 
   const accessByUser = useMemo(() => {
@@ -221,6 +231,11 @@ export default function ProjectDetailClient({
   const [tempUserId, setTempUserId] = useState('')
   const [tempExpiresAt, setTempExpiresAt] = useState('')
   const [tempGrants, setTempGrants] = useState<Record<string, TempGrantDraft>>({})
+  const [newTempName, setNewTempName] = useState('')
+  const [newTempPhone, setNewTempPhone] = useState('')
+  const [newTempPassword, setNewTempPassword] = useState('')
+  const [createTempGrants, setCreateTempGrants] = useState<Record<string, TempGrantDraft>>({})
+  const [createTempExpiresAt, setCreateTempExpiresAt] = useState('')
 
   useEffect(() => {
     assigneeOverridesRef.current = assigneeOverrides
@@ -893,6 +908,138 @@ export default function ProjectDetailClient({
       {activeTab === 'temp' && canManageTempAccess ? (
         <div className="space-y-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
           <p className="text-sm text-gray-500">{t('projectTempAccessHint')}</p>
+          <p className="text-xs text-gray-400">{t('projectTempAccountLoginHint')}</p>
+
+          <div className="space-y-3 rounded-2xl bg-[#F8FAFC] p-4">
+            <div className="text-sm font-semibold text-gray-800">
+              {t('projectTempAccountCreate')}
+            </div>
+            <input
+              value={newTempName}
+              onChange={(e) => setNewTempName(e.target.value)}
+              placeholder={t('projectTempAccountNamePlaceholder')}
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm outline-none shadow-sm"
+            />
+            <div className="text-[11px] text-gray-400">{t('projectTempAccountName')}</div>
+            <input
+              value={newTempPhone}
+              onChange={(e) => setNewTempPhone(e.target.value)}
+              placeholder={t('projectTempAccountPhonePlaceholder')}
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm outline-none shadow-sm"
+            />
+            <div className="text-[11px] text-gray-400">{t('projectTempAccountPhone')}</div>
+            <input
+              type="password"
+              value={newTempPassword}
+              onChange={(e) => setNewTempPassword(e.target.value)}
+              placeholder={t('projectTempAccountPassword')}
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm outline-none shadow-sm"
+            />
+            <input
+              type="date"
+              value={createTempExpiresAt}
+              onChange={(e) => setCreateTempExpiresAt(e.target.value)}
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm outline-none shadow-sm"
+            />
+            <div className="text-[11px] text-gray-400">{t('projectTempAccessExpires')}</div>
+            <div>
+              <div className="mb-2 text-xs font-medium text-gray-500">
+                {t('projectTempAccessTasks')}
+              </div>
+              {project.tasks.length === 0 ? (
+                <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
+              ) : (
+                <div className="space-y-2">
+                  {project.tasks.map((task) => {
+                    const grant = createTempGrants[task.id] || {
+                      canView: false,
+                      canAddMemo: false,
+                    }
+                    return (
+                      <div
+                        key={`create-${task.id}`}
+                        className="rounded-2xl bg-white px-3 py-3 text-sm shadow-sm"
+                      >
+                        <div className="font-medium text-gray-900">{task.title}</div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600">
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={grant.canView}
+                              onChange={(e) => {
+                                const canView = e.target.checked
+                                setCreateTempGrants((prev) => ({
+                                  ...prev,
+                                  [task.id]: {
+                                    canView,
+                                    canAddMemo: canView
+                                      ? prev[task.id]?.canAddMemo || false
+                                      : false,
+                                  },
+                                }))
+                              }}
+                            />
+                            {t('projectTempAccessCanView')}
+                          </label>
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={grant.canAddMemo}
+                              onChange={(e) => {
+                                const canAddMemo = e.target.checked
+                                setCreateTempGrants((prev) => ({
+                                  ...prev,
+                                  [task.id]: {
+                                    canView: canAddMemo
+                                      ? true
+                                      : prev[task.id]?.canView || false,
+                                    canAddMemo,
+                                  },
+                                }))
+                              }}
+                            />
+                            {t('projectTempAccessCanAddMemo')}
+                          </label>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={busy || !newTempName.trim() || !newTempPassword}
+              onClick={async () => {
+                const ok = await run(() =>
+                  createProjectTempAccount(project.id, {
+                    roleName: newTempName,
+                    phone: newTempPhone || null,
+                    password: newTempPassword,
+                    expiresAt: createTempExpiresAt || null,
+                    grants: Object.entries(createTempGrants)
+                      .filter(([, g]) => g.canView || g.canAddMemo)
+                      .map(([taskId, g]) => ({
+                        taskId,
+                        canView: g.canView || g.canAddMemo,
+                        canAddMemo: g.canAddMemo,
+                        expiresAt: createTempExpiresAt || null,
+                      })),
+                  })
+                )
+                if (ok) {
+                  setNewTempName('')
+                  setNewTempPhone('')
+                  setNewTempPassword('')
+                  setCreateTempExpiresAt('')
+                  setCreateTempGrants({})
+                }
+              }}
+              className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {t('projectTempAccountCreateSave')}
+            </button>
+          </div>
 
           <div>
             <div className="mb-2 text-xs font-medium text-gray-500">
@@ -914,6 +1061,7 @@ export default function ProjectDetailClient({
                     }`}
                   >
                     {u.roleName}
+                    {u.loginPhone ? ` · ${u.loginPhone}` : ''}
                   </button>
                 ))
               )}
@@ -964,7 +1112,9 @@ export default function ProjectDetailClient({
                                     ...prev,
                                     [task.id]: {
                                       canView,
-                                      canAddMemo: canView ? prev[task.id]?.canAddMemo || false : false,
+                                      canAddMemo: canView
+                                        ? prev[task.id]?.canAddMemo || false
+                                        : false,
                                     },
                                   }))
                                 }}
@@ -980,7 +1130,9 @@ export default function ProjectDetailClient({
                                   setTempGrants((prev) => ({
                                     ...prev,
                                     [task.id]: {
-                                      canView: canAddMemo ? true : prev[task.id]?.canView || false,
+                                      canView: canAddMemo
+                                        ? true
+                                        : prev[task.id]?.canView || false,
                                       canAddMemo,
                                     },
                                   }))

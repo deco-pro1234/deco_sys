@@ -6,7 +6,13 @@ import { SignJWT, jwtVerify } from 'jose'
 import { createHash } from 'crypto'
 import { getCurrentLocale } from '@/lib/locale'
 import { createTranslator } from '@/lib/i18n'
-import type { PublicLedgerRole } from '@/lib/access'
+import {
+  ACCOUNT_KIND_STANDARD,
+  getDefaultHomePath,
+  type AccountKind,
+  type PublicLedgerRole,
+} from '@/lib/access'
+import { normalizePhoneE164 } from '@/lib/whatsapp/phone'
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'finance-18-super-secret-key-change-in-prod')
 const PWD_SALT = process.env.PWD_SALT || 'finance-18-salt'
@@ -16,10 +22,76 @@ export type SessionUser = {
   roleName: string
   isAdmin: boolean
   publicLedgerRole: PublicLedgerRole
+  accountKind: AccountKind
+}
+
+type AuthUserRow = {
+  id: string
+  roleName: string
+  isAdmin: boolean
+  publicLedgerRole: string | null
+  accountKind: string | null
+  password?: string
+  email?: string
+  loginPhone?: string | null
 }
 
 export async function hashPassword(password: string) {
   return createHash('sha256').update(password + PWD_SALT).digest('hex')
+}
+
+function asAccountKind(value?: string | null): AccountKind {
+  return value === 'PROJECT_TEMP' ? 'PROJECT_TEMP' : ACCOUNT_KIND_STANDARD
+}
+
+async function performLogin(user: AuthUserRow, isAdminLogin: boolean) {
+  const locale = await getCurrentLocale()
+  const t = createTranslator(locale)
+  if (isAdminLogin && !user.isAdmin) {
+    return { success: false, error: t('adminPermissionRequired') }
+  }
+
+  const accountKind = asAccountKind(user.accountKind)
+
+  const token = await new SignJWT({
+    userId: user.id,
+    roleName: user.roleName,
+    isAdmin: user.isAdmin,
+    publicLedgerRole: user.publicLedgerRole ?? 'NONE',
+    accountKind,
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime('24h')
+    .sign(JWT_SECRET)
+
+  const cookieStore = await cookies()
+  cookieStore.set('session_token', token, {
+    httpOnly: true,
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24,
+  })
+
+  const sessionLike = {
+    userId: user.id,
+    roleName: user.roleName,
+    isAdmin: user.isAdmin,
+    publicLedgerRole: (user.publicLedgerRole ?? 'NONE') as PublicLedgerRole,
+    accountKind,
+  }
+
+  return {
+    success: true,
+    redirectTo: getDefaultHomePath(sessionLike),
+    user: {
+      id: user.id,
+      roleName: user.roleName,
+      isAdmin: user.isAdmin,
+      publicLedgerRole: sessionLike.publicLedgerRole,
+      accountKind,
+    },
+  }
 }
 
 export async function login(account: string, password: string, isAdminLogin: boolean = false) {
@@ -27,6 +99,17 @@ export async function login(account: string, password: string, isAdminLogin: boo
   const t = createTranslator(locale)
   const normalizedAccount = String(account || '').trim()
   const plainPassword = String(password || '')
+
+  const userSelect = {
+    id: true,
+    roleName: true,
+    isAdmin: true,
+    publicLedgerRole: true,
+    accountKind: true,
+    password: true,
+    email: true,
+    loginPhone: true,
+  } as const
 
   // ===== 首次登入：帳密 admin / 密碼 admin → 確保 DB 內有真實管理員 =====
   if (normalizedAccount === 'admin' && plainPassword === 'admin') {
@@ -40,7 +123,13 @@ export async function login(account: string, password: string, isAdminLogin: boo
         ],
         isAdmin: true,
       },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+      select: {
+        id: true,
+        roleName: true,
+        isAdmin: true,
+        publicLedgerRole: true,
+        accountKind: true,
+      },
     })
 
     if (!bootstrapAdmin) {
@@ -52,8 +141,15 @@ export async function login(account: string, password: string, isAdminLogin: boo
           isAdmin: true,
           poolEnabled: false,
           publicLedgerRole: 'MEMBER',
+          accountKind: ACCOUNT_KIND_STANDARD,
         },
-        select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+        select: {
+          id: true,
+          roleName: true,
+          isAdmin: true,
+          publicLedgerRole: true,
+          accountKind: true,
+        },
       })
     }
 
@@ -69,7 +165,7 @@ export async function login(account: string, password: string, isAdminLogin: boo
   }
 
   const hashedPassword = await hashPassword(plainPassword)
-  let user: { id: string; roleName: string; isAdmin: boolean; publicLedgerRole: string | null } | null = null
+  let user: AuthUserRow | null = null
 
   const emailCandidate = normalizedAccount.includes('@')
     ? normalizedAccount.toLowerCase()
@@ -78,18 +174,32 @@ export async function login(account: string, password: string, isAdminLogin: boo
   if (emailCandidate) {
     const byEmail = await prisma.user.findUnique({
       where: { email: emailCandidate },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true, password: true },
+      select: userSelect,
     })
     if (byEmail && byEmail.password === hashedPassword) {
       user = byEmail
     }
   }
 
+  // 電話登入（臨時帳 loginPhone；亦相容純數字輸入）
   if (!user) {
-    // roleName：大小寫不敏感（舊帳常記不清大小寫）
+    const phoneCandidate = normalizePhoneE164(normalizedAccount)
+    if (phoneCandidate && phoneCandidate.length >= 8) {
+      const byPhone = await prisma.user.findUnique({
+        where: { loginPhone: phoneCandidate },
+        select: userSelect,
+      })
+      if (byPhone && byPhone.password === hashedPassword) {
+        user = byPhone
+      }
+    }
+  }
+
+  if (!user) {
+    // roleName / 用戶名稱：大小寫不敏感
     const allByRole = await prisma.user.findMany({
       where: { roleName: { equals: normalizedAccount, mode: 'insensitive' } },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true, password: true },
+      select: userSelect,
     })
     for (const u of allByRole) {
       if (u.password === hashedPassword) {
@@ -99,17 +209,27 @@ export async function login(account: string, password: string, isAdminLogin: boo
     }
   }
 
-  // 相容舊版「只用密碼登入」：若雜湊密碼在庫中唯一命中一人，且帳號欄等於其 email / roleName / 密碼本身
+  // 相容舊版「只用密碼登入」
   if (!user) {
     const byPassword = await prisma.user.findMany({
       where: { password: hashedPassword },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true, email: true },
+      select: {
+        id: true,
+        roleName: true,
+        isAdmin: true,
+        publicLedgerRole: true,
+        accountKind: true,
+        email: true,
+        loginPhone: true,
+      },
     })
     if (byPassword.length === 1) {
       const only = byPassword[0]
+      const phoneCandidate = normalizePhoneE164(normalizedAccount)
       const accountMatches =
         only.email.toLowerCase() === normalizedAccount.toLowerCase() ||
         only.roleName.toLowerCase() === normalizedAccount.toLowerCase() ||
+        (phoneCandidate && only.loginPhone === phoneCandidate) ||
         normalizedAccount === plainPassword
       if (accountMatches) {
         user = only
@@ -121,12 +241,22 @@ export async function login(account: string, password: string, isAdminLogin: boo
   if (!user) {
     const legacy = await prisma.user.findFirst({
       where: { password: plainPassword },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true, email: true },
+      select: {
+        id: true,
+        roleName: true,
+        isAdmin: true,
+        publicLedgerRole: true,
+        accountKind: true,
+        email: true,
+        loginPhone: true,
+      },
     })
     if (
       legacy &&
       (legacy.email.toLowerCase() === normalizedAccount.toLowerCase() ||
         legacy.roleName.toLowerCase() === normalizedAccount.toLowerCase() ||
+        (normalizePhoneE164(normalizedAccount) &&
+          legacy.loginPhone === normalizePhoneE164(normalizedAccount)) ||
         normalizedAccount === plainPassword)
     ) {
       await prisma.user.update({
@@ -144,55 +274,13 @@ export async function login(account: string, password: string, isAdminLogin: boo
   return await performLogin(user, isAdminLogin)
 }
 
-async function performLogin(user: { id: string; roleName: string; isAdmin: boolean; publicLedgerRole: string | null }, isAdminLogin: boolean) {
-  const locale = await getCurrentLocale()
-  const t = createTranslator(locale)
-  if (isAdminLogin && !user.isAdmin) {
-    return { success: false, error: t('adminPermissionRequired') }
-  }
-
-  // 生成 JWT Token
-  const token = await new SignJWT({ 
-    userId: user.id, 
-    roleName: user.roleName, 
-    isAdmin: user.isAdmin,
-    publicLedgerRole: user.publicLedgerRole ?? 'NONE',
-  })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime('24h')
-    .sign(JWT_SECRET)
-
-  // 设置 HttpOnly Cookie
-  const cookieStore = await cookies()
-  cookieStore.set('session_token', token, { 
-    httpOnly: true, 
-    path: '/',
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60 * 24 // 24 hours
-  })
-
-  // 兼容前端代码可能直接读 cookie（如果有的话，但目前最好全走 getSession）
-  // 为了安全，不再下发敏感权限字段到普通 cookie
-
-  return {
-    success: true,
-    user: {
-      id: user.id,
-      roleName: user.roleName,
-      isAdmin: user.isAdmin,
-      publicLedgerRole: (user.publicLedgerRole ?? 'NONE') as PublicLedgerRole,
-    },
-  }
-}
-
 export async function logout() {
   const cookieStore = await cookies()
   cookieStore.delete('session_token')
   return { success: true }
 }
 
-export async function getSession() {
+export async function getSession(): Promise<SessionUser | null> {
   const cookieStore = await cookies()
   const token = cookieStore.get('session_token')?.value
 
@@ -202,10 +290,15 @@ export async function getSession() {
     const { payload } = await jwtVerify(token, JWT_SECRET)
 
     if (payload.userId === 'SUPERADMIN_BOOTSTRAP' && payload.isAdmin) {
-      // Legacy bootstrap cookie → map to a real admin row (or create one).
       let admin = await prisma.user.findFirst({
         where: { isAdmin: true },
-        select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+        select: {
+          id: true,
+          roleName: true,
+          isAdmin: true,
+          publicLedgerRole: true,
+          accountKind: true,
+        },
         orderBy: { createdAt: 'asc' },
       })
       if (!admin) {
@@ -217,8 +310,15 @@ export async function getSession() {
             isAdmin: true,
             poolEnabled: false,
             publicLedgerRole: 'MEMBER',
+            accountKind: ACCOUNT_KIND_STANDARD,
           },
-          select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true },
+          select: {
+            id: true,
+            roleName: true,
+            isAdmin: true,
+            publicLedgerRole: true,
+            accountKind: true,
+          },
         })
       }
       return {
@@ -226,22 +326,29 @@ export async function getSession() {
         roleName: admin.roleName,
         isAdmin: true,
         publicLedgerRole: (admin.publicLedgerRole ?? 'MEMBER') as PublicLedgerRole,
+        accountKind: asAccountKind(admin.accountKind),
       }
     }
-    
-    // 二次核对数据库确保用户未被删除或撤销权限
+
     const user = await prisma.user.findUnique({
       where: { id: payload.userId as string },
-      select: { id: true, roleName: true, isAdmin: true, publicLedgerRole: true }
+      select: {
+        id: true,
+        roleName: true,
+        isAdmin: true,
+        publicLedgerRole: true,
+        accountKind: true,
+      },
     })
-    
+
     if (!user) return null
 
     return {
-      userId: user.id, 
-      roleName: user.roleName, 
+      userId: user.id,
+      roleName: user.roleName,
       isAdmin: user.isAdmin,
       publicLedgerRole: (user.publicLedgerRole ?? 'NONE') as PublicLedgerRole,
+      accountKind: asAccountKind(user.accountKind),
     }
   } catch {
     return null

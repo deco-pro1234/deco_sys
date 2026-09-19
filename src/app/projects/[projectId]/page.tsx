@@ -2,9 +2,11 @@ import { redirect } from 'next/navigation'
 import { getSession } from '../../actions/auth'
 import { getPluginFlags } from '../../actions/settings'
 import { getCurrentLocale } from '@/lib/locale'
+import { isProjectTempAccount } from '@/lib/access'
 import {
   getProjectDetail,
   getProjectMemberCandidates,
+  getProjectTempAccountCandidates,
 } from '../../actions/project'
 import ProjectDetailClient from '../ProjectDetailClient'
 
@@ -25,7 +27,9 @@ export default async function ProjectDetailPage({
   if (!session) redirect('/login')
 
   const flags = await getPluginFlags()
-  if (!flags.projects) redirect('/')
+  if (!flags.projects) {
+    redirect(isProjectTempAccount(session) ? '/login' : '/')
+  }
 
   const { projectId } = await params
   const locale = await getCurrentLocale()
@@ -38,10 +42,12 @@ export default async function ProjectDetailPage({
   }
   if (!project) redirect('/projects')
 
-  const candidates =
-    project.canManageTempAccess || project.canManageProject
-      ? await getProjectMemberCandidates(projectId)
-      : []
+  const [memberCandidates, tempCandidates] = await Promise.all([
+    project.canManageProject ? getProjectMemberCandidates() : Promise.resolve([]),
+    project.canManageTempAccess
+      ? getProjectTempAccountCandidates(projectId)
+      : Promise.resolve([]),
+  ])
 
   return (
     <div className="min-h-screen bg-[#F2F2F7]">
@@ -50,7 +56,8 @@ export default async function ProjectDetailPage({
         currentUserId={session.userId}
         isAdmin={session.isAdmin}
         project={toClientJSON(project)}
-        memberCandidates={toClientJSON(candidates)}
+        memberCandidates={toClientJSON(memberCandidates)}
+        tempAccountCandidates={toClientJSON(tempCandidates)}
       />
     </div>
   )

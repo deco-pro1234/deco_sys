@@ -2,11 +2,17 @@
 
 import prisma from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
-import { getSession } from './auth'
+import { getSession, hashPassword } from './auth'
 import { getCurrentLocale } from '@/lib/locale'
 import { createTranslator } from '@/lib/i18n'
 import { getPluginFlags } from './settings'
 import type { ReminderBucket, ReminderItem } from './reminder'
+import {
+  ACCOUNT_KIND_PROJECT_TEMP,
+  ACCOUNT_KIND_STANDARD,
+} from '@/lib/access'
+import { normalizeContactPhoneInput } from '@/lib/whatsapp/phoneSync'
+import { randomUUID } from 'crypto'
 
 export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'DONE' | 'ARCHIVED'
 export type ProjectTaskStatus = 'TODO' | 'DOING' | 'DONE'
@@ -424,28 +430,172 @@ export async function getProjectDetail(projectId: string) {
   }
 }
 
-export async function getProjectMemberCandidates(projectId?: string) {
+export async function getProjectMemberCandidates() {
   const session = await requireSession()
-  if (session.isAdmin) {
+  if (!session.isAdmin) return []
+  return prisma.user.findMany({
+    where: {
+      accountKind: ACCOUNT_KIND_STANDARD,
+      isAdmin: false,
+    },
+    orderBy: { roleName: 'asc' },
+    select: {
+      id: true,
+      roleName: true,
+      email: true,
+      isAdmin: true,
+      accountKind: true,
+      loginPhone: true,
+    },
+  })
+}
+
+export async function getProjectTempAccountCandidates(projectId: string) {
+  try {
+    const session = await requireSession()
+    if (!session.isAdmin) await assertCanManageTempAccess(projectId)
+    else await assertProjectsEnabled()
+
     return prisma.user.findMany({
+      where: { accountKind: ACCOUNT_KIND_PROJECT_TEMP, isAdmin: false },
       orderBy: { roleName: 'asc' },
-      select: { id: true, roleName: true, email: true, isAdmin: true },
+      select: {
+        id: true,
+        roleName: true,
+        email: true,
+        isAdmin: true,
+        accountKind: true,
+        loginPhone: true,
+      },
     })
+  } catch {
+    return []
   }
+}
 
-  if (projectId) {
-    try {
-      await assertCanManageTempAccess(projectId)
-      return prisma.user.findMany({
-        orderBy: { roleName: 'asc' },
-        select: { id: true, roleName: true, email: true, isAdmin: true },
-      })
-    } catch {
-      return []
+export async function createProjectTempAccount(
+  projectId: string,
+  input: {
+    roleName: string
+    password: string
+    phone?: string | null
+    expiresAt?: string | null
+    grants: TaskAccessGrantInput[]
+  }
+) {
+  try {
+    const { session } = await assertCanManageTempAccess(projectId)
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+
+    const roleName = String(input.roleName || '').trim()
+    const password = String(input.password || '')
+    if (!roleName) return { success: false, error: t('projectTempAccountNameRequired') }
+    if (password.length < 4) return { success: false, error: t('projectTempAccountPasswordRequired') }
+
+    const phoneNorm = normalizeContactPhoneInput(input.phone)
+    if (!phoneNorm.ok) {
+      return { success: false, error: phoneNorm.error || t('projectTempAccountPhoneInvalid') }
     }
-  }
 
-  return []
+    const nameTaken = await prisma.user.findFirst({
+      where: { roleName: { equals: roleName, mode: 'insensitive' } },
+      select: { id: true },
+    })
+    if (nameTaken) return { success: false, error: t('projectTempAccountNameTaken') }
+
+    if (phoneNorm.phoneE164) {
+      const phoneTaken = await prisma.user.findFirst({
+        where: { loginPhone: phoneNorm.phoneE164 },
+        select: { id: true },
+      })
+      if (phoneTaken) return { success: false, error: t('projectTempAccountPhoneTaken') }
+    }
+
+    const projectTasks = await prisma.projectTask.findMany({
+      where: { projectId },
+      select: { id: true },
+    })
+    const validTaskIds = new Set(projectTasks.map((task) => task.id))
+    const defaultExpires =
+      input.expiresAt && String(input.expiresAt).trim()
+        ? new Date(String(input.expiresAt))
+        : null
+    const normalizedGrants = (input.grants || [])
+      .map((grant) => {
+        const taskId = String(grant.taskId || '').trim()
+        const canAddMemo = Boolean(grant.canAddMemo)
+        const canView = Boolean(grant.canView) || canAddMemo
+        const expiresAt =
+          grant.expiresAt && String(grant.expiresAt).trim()
+            ? new Date(String(grant.expiresAt))
+            : defaultExpires
+        return {
+          taskId,
+          canView,
+          canAddMemo,
+          expiresAt:
+            expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
+        }
+      })
+      .filter((grant) => grant.taskId && validTaskIds.has(grant.taskId) && grant.canView)
+
+    if (normalizedGrants.length === 0) {
+      return { success: false, error: t('projectTempAccountGrantRequired') }
+    }
+
+    const email = `temp.${randomUUID().replace(/-/g, '')}@project-temp.local`
+    const hashed = await hashPassword(password)
+
+    const created = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email,
+          password: hashed,
+          roleName,
+          accountKind: ACCOUNT_KIND_PROJECT_TEMP,
+          loginPhone: phoneNorm.phoneE164,
+          isAdmin: false,
+          poolEnabled: false,
+          publicLedgerRole: 'NONE',
+          ocrEnabled: false,
+          privateLedgerVisibility: 'PRIVATE',
+          ...(phoneNorm.phoneE164
+            ? {
+                profile: {
+                  create: {
+                    legalNameEn: roleName,
+                    contactPhone: phoneNorm.phoneE164,
+                  },
+                },
+              }
+            : {}),
+        },
+        select: { id: true, roleName: true, loginPhone: true },
+      })
+
+      for (const grant of normalizedGrants) {
+        await tx.projectTaskAccess.create({
+          data: {
+            projectId,
+            taskId: grant.taskId,
+            userId: user.id,
+            canView: grant.canView,
+            canAddMemo: grant.canAddMemo,
+            expiresAt: grant.expiresAt,
+            createdById: session.userId,
+          },
+        })
+      }
+
+      return user
+    })
+
+    revalidateProjects(projectId)
+    return { success: true, userId: created.id }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
 }
 
 export async function setUserProjectTaskAccess(
@@ -470,8 +620,14 @@ export async function setUserProjectTaskAccess(
       return { success: false, error: t('projectTempAccessMemberForbidden') }
     }
 
-    const user = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, accountKind: true, isAdmin: true },
+    })
     if (!user) return { success: false, error: t('unauthorized') }
+    if (user.accountKind !== ACCOUNT_KIND_PROJECT_TEMP || user.isAdmin) {
+      return { success: false, error: t('projectTempAccessStaffForbidden') }
+    }
 
     const projectTasks = await prisma.projectTask.findMany({
       where: { projectId },

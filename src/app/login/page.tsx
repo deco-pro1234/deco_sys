@@ -42,6 +42,7 @@ export default function LoginPage() {
             roleName: res.user.roleName,
             isAdmin: res.user.isAdmin,
             publicLedgerRole: res.user.publicLedgerRole,
+            accountKind: res.user.accountKind,
           }));
         }
       } else {

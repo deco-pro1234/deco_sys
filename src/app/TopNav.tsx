@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { logout } from './actions/auth'
 import { LOCALE_COOKIE, createTranslator, type Locale } from '@/lib/i18n'
-import { hasPublicLedgerAccess } from '@/lib/access'
+import { hasPublicLedgerAccess, isProjectTempAccount } from '@/lib/access'
 import type { PluginFlags } from '@/lib/plugins'
 import BrandLogo from '@/components/BrandLogo'
 import BrandMark from '@/components/BrandMark'
@@ -15,6 +15,7 @@ type NavSession = {
   roleName: string
   isAdmin: boolean
   publicLedgerRole?: string | null
+  accountKind?: string | null
 }
 
 type NavItem = {
@@ -58,32 +59,58 @@ export default function TopNav({
   const [isMoreOpen, setIsMoreOpen] = useState(false)
 
   const primaryNavItems: NavItem[] = []
+  const projectTemp = isProjectTempAccount(session)
 
-  if (hasPublicLedgerAccess(session)) {
-    primaryNavItems.push({ name: t('publicLedger'), href: '/' })
-  }
+  if (projectTemp) {
+    if (pluginFlags.projects) {
+      primaryNavItems.push({
+        name: t('projects'),
+        href: '/projects',
+        count: projectReminderCount,
+      })
+    }
+  } else {
+    if (hasPublicLedgerAccess(session)) {
+      primaryNavItems.push({ name: t('publicLedger'), href: '/' })
+    }
 
-  primaryNavItems.push({ name: t('privateLedger'), href: '/private-ledger' })
+    primaryNavItems.push({ name: t('privateLedger'), href: '/private-ledger' })
 
-  if (pluginFlags.matters) {
-    primaryNavItems.push({ name: t('activities'), href: '/activities', count: activityReminderCount })
-  }
+    if (pluginFlags.matters) {
+      primaryNavItems.push({
+        name: t('activities'),
+        href: '/activities',
+        count: activityReminderCount,
+      })
+    }
 
-  if (pluginFlags.projects) {
-    primaryNavItems.push({ name: t('projects'), href: '/projects', count: projectReminderCount })
-  }
+    if (pluginFlags.projects) {
+      primaryNavItems.push({
+        name: t('projects'),
+        href: '/projects',
+        count: projectReminderCount,
+      })
+    }
 
-  if (hasPublicLedgerAccess(session) && pluginFlags.recurring) {
-    primaryNavItems.push({ name: t('recurring'), href: '/recurring', count: recurringReminderCount })
-  }
+    if (hasPublicLedgerAccess(session) && pluginFlags.recurring) {
+      primaryNavItems.push({
+        name: t('recurring'),
+        href: '/recurring',
+        count: recurringReminderCount,
+      })
+    }
 
-  if (session) {
-    primaryNavItems.push({ name: t('personalProfile'), href: `/my-profile/${session.userId}` })
+    if (session) {
+      primaryNavItems.push({
+        name: t('personalProfile'),
+        href: `/my-profile/${session.userId}`,
+      })
+    }
   }
 
   const secondaryNavItems: NavItem[] = []
 
-  if (session?.isAdmin) {
+  if (session?.isAdmin && !projectTemp) {
     secondaryNavItems.push({ name: t('review'), href: '/review', count: pendingCount })
     if (pluginFlags.contracts) {
       secondaryNavItems.push({ name: t('contracts'), href: '/contracts', count: contractReminderCount })

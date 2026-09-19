@@ -19,6 +19,10 @@ model User {
   verificationSentAt     DateTime?
   password               String   // 密碼 (SHA-256 雜湊 + PWD_SALT)；移除 @unique 避免密碼重複無法建 User
   roleName               String   // 角色顯示名稱 (也可當登入帳號)
+  /** STANDARD = 一般員工；PROJECT_TEMP = 項目插件臨時帳（僅項目限權） */
+  accountKind            String   @default("STANDARD") // STANDARD | PROJECT_TEMP
+  /** 臨時帳可用電話登入；正規化 E.164 純數字；一般帳可空 */
+  loginPhone             String?  @unique
   isAdmin                Boolean  @default(false) // 是否为管理员
   poolEnabled            Boolean  @default(false) // 是否启用资金池
   publicLedgerRole       String   @default("NONE") // "NONE" | "MEMBER"
@@ -51,6 +55,9 @@ model User {
   projectLedgerEntries ProjectLedgerEntry[] @relation("UserProjectLedgerEntries")
   projectTaskAccesses  ProjectTaskAccess[]  @relation("UserProjectTaskAccess")
   projectTaskAccessesCreated ProjectTaskAccess[] @relation("UserCreatedProjectTaskAccess")
+
+  @@index([accountKind])
+  @@index([roleName])
 }
 
 model Category {

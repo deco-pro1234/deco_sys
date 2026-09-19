@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getSession } from '../actions/auth'
 import { getPluginFlags } from '../actions/settings'
 import { getCurrentLocale } from '@/lib/locale'
+import { isProjectTempAccount } from '@/lib/access'
 import {
   getProjectMemberCandidates,
   getProjects,
@@ -21,7 +22,9 @@ export default async function ProjectsPage() {
   if (!session) redirect('/login')
 
   const flags = await getPluginFlags()
-  if (!flags.projects) redirect('/')
+  if (!flags.projects) {
+    redirect(isProjectTempAccount(session) ? '/login' : '/')
+  }
 
   const locale = await getCurrentLocale()
   const [projects, candidates] = await Promise.all([

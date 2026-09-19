@@ -11,6 +11,7 @@ import { DEFAULT_PLUGIN_FLAGS } from "@/lib/plugins";
 import TopNav from "./TopNav";
 import { getCurrentLocale } from "@/lib/locale";
 import ReminderOverview from "@/components/ReminderOverview";
+import { isProjectTempAccount } from "@/lib/access";
 
 export const dynamic = "force-dynamic";
 
@@ -79,11 +80,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
   if (session) {
     try {
+      const projectTemp = isProjectTempAccount(session)
       const [contracts, activities, recurring, projects] = await Promise.all([
-        pluginFlags.contracts ? getContractReminderItems() : Promise.resolve([] as ReminderItem[]),
-        pluginFlags.matters ? getActivityReminderItems() : Promise.resolve([] as ReminderItem[]),
-        pluginFlags.recurring ? getRecurringReminderItems() : Promise.resolve([] as ReminderItem[]),
-        pluginFlags.projects ? getProjectReminderItems() : Promise.resolve([] as ReminderItem[]),
+        !projectTemp && pluginFlags.contracts
+          ? getContractReminderItems()
+          : Promise.resolve([] as ReminderItem[]),
+        !projectTemp && pluginFlags.matters
+          ? getActivityReminderItems()
+          : Promise.resolve([] as ReminderItem[]),
+        !projectTemp && pluginFlags.recurring
+          ? getRecurringReminderItems()
+          : Promise.resolve([] as ReminderItem[]),
+        pluginFlags.projects
+          ? getProjectReminderItems()
+          : Promise.resolve([] as ReminderItem[]),
       ])
       reminderOverview = {
         contracts,
