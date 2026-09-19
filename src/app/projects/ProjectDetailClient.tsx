@@ -9,10 +9,12 @@ import {
   addProjectMemo,
   addProjectTaskMemo,
   createProjectLedgerEntry,
+  createProjectSection,
   createProjectTask,
   createProjectTempAccount,
   deleteProject,
   deleteProjectLedgerEntry,
+  deleteProjectSection,
   deleteProjectTask,
   removeUserProjectTaskAccess,
   setProjectMembers,
@@ -51,6 +53,8 @@ type ProjectTask = {
   dueDate?: string | Date | null
   reminderDays: number
   note?: string | null
+  sectionId?: string | null
+  section?: { id: string; title: string; parentId?: string | null } | null
   assigneeId?: string | null
   assignee?: { id?: string; roleName?: string | null } | null
   assignees?: Array<{
@@ -59,6 +63,14 @@ type ProjectTask = {
   }>
   createdBy?: { roleName?: string | null } | null
   memos?: TaskMemo[]
+}
+
+type ProjectSection = {
+  id: string
+  title: string
+  parentId?: string | null
+  sortOrder?: number
+  children?: Array<{ id: string; title: string; parentId?: string | null; sortOrder?: number }>
 }
 
 type TaskAccessRow = {
@@ -89,6 +101,7 @@ type ProjectDetail = {
     user?: { id: string; roleName?: string | null; email?: string | null } | null
   }>
   tasks: ProjectTask[]
+  sections?: ProjectSection[]
   ledger: Array<{
     id: string
     type: string
@@ -172,12 +185,17 @@ export default function ProjectDetailClient({
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskDue, setTaskDue] = useState('')
+  const [taskSectionId, setTaskSectionId] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const [taskMemoDraft, setTaskMemoDraft] = useState('')
   const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
   const [assigneeOverrides, setAssigneeOverrides] = useState<Record<string, string[]>>({})
   const assigneeOverridesRef = useRef(assigneeOverrides)
+  const [rootSectionTitle, setRootSectionTitle] = useState('')
+  const [childSectionTitle, setChildSectionTitle] = useState('')
+  const [childParentId, setChildParentId] = useState('')
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
@@ -227,6 +245,87 @@ export default function ProjectDetailClient({
     }
     return Array.from(map.values())
   }, [project.taskAccesses])
+
+  const rootSections = useMemo(() => {
+    const all = project.sections || []
+    return all
+      .filter((s) => !s.parentId)
+      .map((s) => ({
+        ...s,
+        children: (s.children && s.children.length > 0
+          ? s.children
+          : all.filter((c) => c.parentId === s.id)
+        ).slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+      }))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  }, [project.sections])
+
+  const sectionOptions = useMemo(() => {
+    const opts: Array<{ id: string; label: string }> = [
+      { id: '', label: t('projectTaskSectionNone') },
+    ]
+    for (const root of rootSections) {
+      opts.push({ id: root.id, label: root.title })
+      for (const child of root.children || []) {
+        opts.push({ id: child.id, label: `${root.title} / ${child.title}` })
+      }
+    }
+    return opts
+  }, [rootSections, t])
+
+  const tasksBySectionId = useMemo(() => {
+    const map = new Map<string, ProjectTask[]>()
+    for (const task of project.tasks) {
+      const key = task.sectionId || ''
+      const list = map.get(key) || []
+      list.push(task)
+      map.set(key, list)
+    }
+    return map
+  }, [project.tasks])
+
+  const displayRows = useMemo(() => {
+    type Row =
+      | { kind: 'section'; id: string; title: string; depth: number }
+      | { kind: 'task'; task: ProjectTask }
+    const build = (hideEmpty: boolean) => {
+      const rows: Row[] = []
+      for (const root of rootSections) {
+        const rootTasks = tasksBySectionId.get(root.id) || []
+        const childBlocks = (root.children || []).filter((child) => {
+          const childTasks = tasksBySectionId.get(child.id) || []
+          return !hideEmpty || childTasks.length > 0
+        })
+        if (hideEmpty && rootTasks.length === 0 && childBlocks.length === 0) continue
+
+        rows.push({ kind: 'section', id: root.id, title: root.title, depth: 0 })
+        for (const task of rootTasks) rows.push({ kind: 'task', task })
+        for (const child of childBlocks) {
+          const childTasks = tasksBySectionId.get(child.id) || []
+          if (hideEmpty && childTasks.length === 0) continue
+          rows.push({ kind: 'section', id: child.id, title: child.title, depth: 1 })
+          for (const task of childTasks) rows.push({ kind: 'task', task })
+        }
+      }
+
+      const uncategorized = tasksBySectionId.get('') || []
+      if (uncategorized.length > 0) {
+        rows.push({
+          kind: 'section',
+          id: '__uncategorized',
+          title: t('projectSectionUncategorized'),
+          depth: 0,
+        })
+        for (const task of uncategorized) rows.push({ kind: 'task', task })
+      }
+      return rows
+    }
+    return { guest: build(true), manage: build(false) }
+  }, [rootSections, tasksBySectionId, t])
+
+  const taskDisplayRows = isTemp ? displayRows.guest : displayRows.manage
+  /** Temp grants are task-only; hide empty section headers with nothing to check. */
+  const grantDisplayRows = displayRows.guest
 
   const [tempUserId, setTempUserId] = useState('')
   const [tempExpiresAt, setTempExpiresAt] = useState('')
@@ -454,7 +553,73 @@ export default function ProjectDetailClient({
       {activeTab === 'tasks' ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
           {isFullMember ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
+              <div className="space-y-2 rounded-2xl bg-[#F8FAFC] p-3">
+                <div className="text-xs font-semibold text-gray-600">{t('projectSections')}</div>
+                <div className="flex gap-2">
+                  <input
+                    value={rootSectionTitle}
+                    onChange={(e) => setRootSectionTitle(e.target.value)}
+                    placeholder={t('projectSectionAddRoot')}
+                    className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !rootSectionTitle.trim()}
+                    onClick={async () => {
+                      const ok = await run(() =>
+                        createProjectSection(project.id, { title: rootSectionTitle })
+                      )
+                      if (ok) setRootSectionTitle('')
+                    }}
+                    className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    {t('projectSectionAddRoot')}
+                  </button>
+                </div>
+                {rootSections.length > 0 ? (
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      value={childParentId}
+                      onChange={(e) => setChildParentId(e.target.value)}
+                      className="rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                    >
+                      <option value="">{t('projectSectionAddChild')}…</option>
+                      {rootSections.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.title}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={childSectionTitle}
+                      onChange={(e) => setChildSectionTitle(e.target.value)}
+                      placeholder={t('projectSectionTitlePlaceholder')}
+                      className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !childParentId || !childSectionTitle.trim()}
+                      onClick={async () => {
+                        const ok = await run(() =>
+                          createProjectSection(project.id, {
+                            title: childSectionTitle,
+                            parentId: childParentId,
+                          })
+                        )
+                        if (ok) {
+                          setChildSectionTitle('')
+                        }
+                      }}
+                      className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {t('projectSectionAddChild')}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
               <input
                 value={taskTitle}
                 onChange={(e) => setTaskTitle(e.target.value)}
@@ -467,6 +632,17 @@ export default function ProjectDetailClient({
                 onChange={(e) => setTaskDue(e.target.value)}
                 className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
               />
+              <select
+                value={taskSectionId}
+                onChange={(e) => setTaskSectionId(e.target.value)}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              >
+                {sectionOptions.map((opt) => (
+                  <option key={opt.id || 'none'} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
               <div>
                 <div className="mb-2 text-xs font-medium text-gray-500">
                   {t('projectTaskAssignees')}
@@ -496,6 +672,7 @@ export default function ProjectDetailClient({
                     createProjectTask(project.id, {
                       title: taskTitle,
                       dueDate: taskDue || null,
+                      sectionId: taskSectionId || null,
                       assigneeIds: taskAssigneeIds,
                     })
                   )
@@ -509,14 +686,90 @@ export default function ProjectDetailClient({
               >
                 {t('addProjectTask')}
               </button>
+              </div>
             </div>
           ) : null}
 
           <div className="divide-y divide-gray-100">
-            {project.tasks.length === 0 ? (
+            {taskDisplayRows.length === 0 ? (
               <div className="py-6 text-center text-sm text-gray-400">{t('projectTaskEmpty')}</div>
             ) : (
-              project.tasks.map((task) => {
+              taskDisplayRows.map((row) => {
+                if (row.kind === 'section') {
+                  if (row.depth > 0) {
+                    const parent = rootSections.find((r) =>
+                      (r.children || []).some((c) => c.id === row.id)
+                    )
+                    if (parent && collapsedSections[parent.id]) return null
+                  }
+                  const collapsed = collapsedSections[row.id]
+                  const rootMatch = rootSections.find((s) => s.id === row.id)
+                  const canDelete =
+                    isFullMember &&
+                    row.id !== '__uncategorized' &&
+                    !(rootMatch && (rootMatch.children || []).length > 0)
+                  return (
+                    <div
+                      key={`sec-${row.id}`}
+                      className={`flex items-center justify-between gap-2 py-3 ${
+                        row.depth > 0 ? 'pl-4' : ''
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        onClick={() =>
+                          setCollapsedSections((prev) => ({
+                            ...prev,
+                            [row.id]: !prev[row.id],
+                          }))
+                        }
+                      >
+                        <span className="text-xs text-gray-400">{collapsed ? '›' : '▾'}</span>
+                        <span
+                          className={`truncate font-semibold ${
+                            row.depth > 0 ? 'text-sm text-gray-700' : 'text-sm text-gray-900'
+                          }`}
+                        >
+                          {row.title}
+                        </span>
+                      </button>
+                      {canDelete ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            if (!confirm(t('confirmDeleteItem'))) return
+                            run(() => deleteProjectSection(row.id))
+                          }}
+                          className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                        >
+                          {t('delete')}
+                        </button>
+                      ) : null}
+                    </div>
+                  )
+                }
+
+                const task = row.task
+                const parentSectionKey = task.sectionId || '__uncategorized'
+                if (collapsedSections[parentSectionKey]) return null
+                // Also collapse if parent root is collapsed for child sections
+                const sectionMeta = task.sectionId
+                  ? rootSections
+                      .flatMap((r) => [
+                        { id: r.id, parentId: null as string | null },
+                        ...(r.children || []).map((c) => ({
+                          id: c.id,
+                          parentId: r.id as string | null,
+                        })),
+                      ])
+                      .find((s) => s.id === task.sectionId)
+                  : null
+                if (sectionMeta?.parentId && collapsedSections[sectionMeta.parentId]) {
+                  return null
+                }
+
                 const expanded = expandedTaskId === task.id
                 const names = taskAssigneeNames(task)
                 const canMemo = canAddMemoForTask(task.id)
@@ -657,6 +910,39 @@ export default function ProjectDetailClient({
                                 )
                               })}
                             </div>
+                          </div>
+                        ) : null}
+
+                        {isFullMember ? (
+                          <div>
+                            <div className="mb-2 text-xs font-medium text-gray-500">
+                              {t('projectTaskSection')}
+                            </div>
+                            <select
+                              value={task.sectionId || ''}
+                              disabled={busy}
+                              onChange={(e) => {
+                                const nextSectionId = e.target.value || null
+                                run(() =>
+                                  updateProjectTask(task.id, {
+                                    title: task.title,
+                                    status: task.status as any,
+                                    dueDate: dayInput(task.dueDate) || null,
+                                    reminderDays: task.reminderDays,
+                                    note: task.note || undefined,
+                                    sectionId: nextSectionId,
+                                    assigneeIds: getTaskAssigneeIds(task),
+                                  })
+                                )
+                              }}
+                              className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                            >
+                              {sectionOptions.map((opt) => (
+                                <option key={opt.id || 'none'} value={opt.id}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                         ) : null}
 
@@ -957,7 +1243,20 @@ export default function ProjectDetailClient({
                 <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
               ) : (
                 <div className="space-y-2">
-                  {project.tasks.map((task) => {
+                  {grantDisplayRows.map((row) => {
+                    if (row.kind === 'section') {
+                      return (
+                        <div
+                          key={`create-sec-${row.id}`}
+                          className={`text-xs font-semibold text-gray-500 ${
+                            row.depth > 0 ? 'pl-2 pt-2' : 'pt-1'
+                          }`}
+                        >
+                          {row.title}
+                        </div>
+                      )
+                    }
+                    const task = row.task
                     const grant = createTempGrants[task.id] || {
                       canView: false,
                       canAddMemo: false,
@@ -1097,7 +1396,20 @@ export default function ProjectDetailClient({
                   <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
                 ) : (
                   <div className="space-y-2">
-                    {project.tasks.map((task) => {
+                    {grantDisplayRows.map((row) => {
+                      if (row.kind === 'section') {
+                        return (
+                          <div
+                            key={`edit-sec-${row.id}`}
+                            className={`text-xs font-semibold text-gray-500 ${
+                              row.depth > 0 ? 'pl-2 pt-2' : 'pt-1'
+                            }`}
+                          >
+                            {row.title}
+                          </div>
+                        )
+                      }
+                      const task = row.task
                       const grant = tempGrants[task.id] || {
                         canView: false,
                         canAddMemo: false,
