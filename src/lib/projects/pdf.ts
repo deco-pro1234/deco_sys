@@ -346,6 +346,219 @@ function statusLabel(status: string, L: Labels) {
   return L.statusTodo
 }
 
+type Rgb = [number, number, number]
+
+const COLORS = {
+  brand: [0, 122, 255] as Rgb,
+  brandDark: [30, 64, 175] as Rgb,
+  brandSoft: [238, 244, 255] as Rgb,
+  slate: [51, 65, 85] as Rgb,
+  muted: [100, 116, 139] as Rgb,
+  line: [226, 232, 240] as Rgb,
+  card: [248, 250, 252] as Rgb,
+  white: [255, 255, 255] as Rgb,
+  done: [16, 185, 129] as Rgb,
+  doneSoft: [236, 253, 245] as Rgb,
+  doing: [245, 158, 11] as Rgb,
+  doingSoft: [255, 251, 235] as Rgb,
+  todo: [100, 116, 139] as Rgb,
+  todoSoft: [241, 245, 249] as Rgb,
+  sectionRoot: [15, 23, 42] as Rgb,
+  sectionChild: [51, 65, 85] as Rgb,
+}
+
+function statusPalette(status: string): { fg: Rgb; bg: Rgb } {
+  if (status === 'DONE') return { fg: COLORS.done, bg: COLORS.doneSoft }
+  if (status === 'DOING') return { fg: COLORS.doing, bg: COLORS.doingSoft }
+  return { fg: COLORS.todo, bg: COLORS.todoSoft }
+}
+
+function taskPercent(task: ProjectPdfTask) {
+  if (typeof task.completionPercent === 'number') return task.completionPercent
+  if (task.status === 'DONE') return 100
+  if (task.status === 'DOING') return 50
+  return 0
+}
+
+function roundedRect(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  style: 'F' | 'S' | 'FD' = 'F'
+) {
+  const rr = Math.min(r, w / 2, h / 2)
+  doc.roundedRect(x, y, w, h, rr, rr, style)
+}
+
+function drawStatusPill(
+  doc: jsPDF,
+  label: string,
+  status: string,
+  x: number,
+  y: number,
+  fontReg: string
+) {
+  const { fg, bg } = statusPalette(status)
+  doc.setFont(fontReg, 'bold')
+  doc.setFontSize(7)
+  const tw = doc.getTextWidth(label) + 10
+  const th = 12
+  doc.setFillColor(...bg)
+  roundedRect(doc, x, y - 9, tw, th, 3, 'F')
+  doc.setTextColor(...fg)
+  doc.text(label, x + 5, y)
+  doc.setTextColor(...COLORS.slate)
+  return tw
+}
+
+function drawProgressBar(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  percent: number,
+  fill: Rgb
+) {
+  const h = 6
+  doc.setFillColor(...COLORS.line)
+  roundedRect(doc, x, y, w, h, 3, 'F')
+  const filled = Math.max(0, Math.min(100, percent)) / 100 * w
+  if (filled > 0.5) {
+    doc.setFillColor(...fill)
+    roundedRect(doc, x, y, Math.max(filled, 4), h, 3, 'F')
+  }
+}
+
+/** Compact meta chips under brand header for list/progress docs. */
+function drawMetaSummaryCards(
+  doc: jsPDF,
+  input: GenerateProjectPdfInput,
+  L: Labels,
+  locale: ProjectPdfLocale,
+  margin: number,
+  pageW: number,
+  y: number,
+  fontReg: string,
+  fontBold: string
+) {
+  const formatDay = (value?: Date | string | null) => {
+    if (!value) return ''
+    const d = typeof value === 'string' ? new Date(value) : value
+    if (Number.isNaN(d.getTime())) return ''
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+  }
+
+  const cards: Array<{ label: string; value: string; accent: Rgb; soft: Rgb }> = [
+    { label: L.status, value: input.projectStatus, accent: COLORS.brand, soft: COLORS.brandSoft },
+  ]
+  if (input.ownerName) {
+    cards.push({
+      label: L.owner,
+      value: input.ownerName,
+      accent: COLORS.slate,
+      soft: COLORS.card,
+    })
+  }
+  if (input.completion) {
+    cards.push({
+      label: L.completion,
+      value: `${input.completion.percent}%`,
+      accent: COLORS.done,
+      soft: COLORS.doneSoft,
+    })
+    cards.push({
+      label: L.completionDetail,
+      value: `${input.completion.done}/${input.completion.doing}/${input.completion.todo}`,
+      accent: COLORS.doing,
+      soft: COLORS.doingSoft,
+    })
+  } else if (input.startDate || input.endDate) {
+    cards.push({
+      label: L.startDate,
+      value: formatDay(input.startDate) || '—',
+      accent: COLORS.brand,
+      soft: COLORS.brandSoft,
+    })
+  }
+
+  const gap = 8
+  const usable = pageW - margin * 2
+  const cardW = (usable - gap * (Math.min(cards.length, 4) - 1)) / Math.min(cards.length, 4)
+  const cardH = 36
+  let x = margin
+  for (const card of cards.slice(0, 4)) {
+    doc.setFillColor(...card.soft)
+    roundedRect(doc, x, y, cardW, cardH, 6, 'F')
+    doc.setFillColor(...card.accent)
+    doc.rect(x, y, 3, cardH, 'F')
+    doc.setFont(fontReg, 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(...COLORS.muted)
+    doc.text(card.label, x + 10, y + 12)
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(...COLORS.slate)
+    const clipped =
+      card.value.length > 18 ? `${card.value.slice(0, 16)}…` : card.value
+    doc.text(clipped, x + 10, y + 26)
+    x += cardW + gap
+  }
+  y += cardH + 8
+
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(8)
+  doc.setTextColor(...COLORS.muted)
+  const extras = [
+    input.contactName ? `${L.contact}: ${input.contactName}` : '',
+    input.startDate && input.completion ? `${L.startDate}: ${formatDay(input.startDate)}` : '',
+    input.endDate ? `${L.endDate}: ${formatDay(input.endDate)}` : '',
+    `${L.generatedAt}: ${formatDateTime(new Date(), locale)}`,
+  ].filter(Boolean)
+  if (extras.length) {
+    y = writeWrapped(doc, extras.join('  ·  '), margin, y, usable, 10)
+    y += 4
+  }
+
+  if (input.completion && (input.mode === 'progress' || input.mode === 'sectionList')) {
+    y += 2
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...COLORS.slate)
+    doc.text(`${L.completion} ${input.completion.percent}%`, margin, y)
+    y += 6
+    drawProgressBar(doc, margin, y, usable, input.completion.percent, COLORS.brand)
+    y += 14
+  }
+
+  if (input.projectNote?.trim() && input.mode === 'progress') {
+    doc.setFillColor(...COLORS.brandSoft)
+    const note = input.projectNote.trim()
+    const lines = doc.splitTextToSize(note, usable - 16) as string[]
+    const boxH = Math.min(12 + lines.length * 11, 72)
+    roundedRect(doc, margin, y, usable, boxH, 6, 'F')
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...COLORS.brandDark)
+    doc.text(L.note, margin + 8, y + 12)
+    doc.setFont(fontReg, 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...COLORS.slate)
+    doc.text(lines.slice(0, 4), margin + 8, y + 24)
+    y += boxH + 10
+  }
+
+  doc.setTextColor(...COLORS.slate)
+  return y + 4
+}
+
+function measureWrappedHeight(doc: jsPDF, text: string, maxWidth: number, lineHeight: number) {
+  const lines = doc.splitTextToSize(text || '', maxWidth) as string[]
+  return Math.max(lineHeight, lines.length * lineHeight)
+}
+
 function ensureSpace(
   doc: jsPDF,
   y: number,
@@ -460,26 +673,31 @@ function drawTaskBlock(
   fontReg: string,
   fontBold: string
 ) {
-  y = ensureSpace(doc, y, 28, margin, pageH)
+  y = ensureSpace(doc, y, 40, margin, pageH)
+  const { fg, bg } = statusPalette(task.status)
+  doc.setFillColor(...fg)
+  doc.rect(x, y - 2, 3.5, 20, 'F')
+
   doc.setFont(fontBold, 'bold')
   doc.setFontSize(12)
-  y = writeWrapped(doc, `${L.task}: ${task.title}`, x, y, maxWidth, 14)
+  doc.setTextColor(...COLORS.slate)
+  y = writeWrapped(doc, task.title, x + 10, y + 2, maxWidth - 12, 14)
   y += 4
+
+  const statusText = statusLabel(task.status, L)
+  const pillW = drawStatusPill(doc, statusText, task.status, x + 10, y + 2, fontReg)
+  const pct = taskPercent(task)
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(8)
+  doc.setTextColor(...COLORS.muted)
+  doc.text(`${L.taskCompletion}: ${pct}%`, x + 16 + pillW, y + 2)
+  y += 10
+  drawProgressBar(doc, x + 10, y, Math.min(180, maxWidth - 20), pct, fg)
+  y += 12
+
   doc.setFont(fontReg, 'normal')
   doc.setFontSize(9)
-
-  const meta: string[] = [
-    `${L.status}: ${statusLabel(task.status, L)}`,
-  ]
-  const pct =
-    typeof task.completionPercent === 'number'
-      ? task.completionPercent
-      : task.status === 'DONE'
-        ? 100
-        : task.status === 'DOING'
-          ? 50
-          : 0
-  meta.push(`${L.taskCompletion}: ${pct}%`)
+  const meta: string[] = []
   if (task.sectionPath) meta.push(`${L.section}: ${task.sectionPath}`)
   const schedule = scheduleLabel(task, locale)
   if (schedule) meta.push(`${L.schedule}: ${schedule}`)
@@ -488,24 +706,34 @@ function drawTaskBlock(
   }
   for (const line of meta) {
     y = ensureSpace(doc, y, 12, margin, pageH)
-    y = writeWrapped(doc, line, x, y, maxWidth, 11)
+    doc.setTextColor(...COLORS.muted)
+    y = writeWrapped(doc, line, x + 10, y, maxWidth - 12, 11)
   }
 
   y += 4
   doc.setFont(fontBold, 'bold')
-  doc.text(L.content, x, y)
+  doc.setFontSize(8)
+  doc.setTextColor(...fg)
+  doc.text(L.content, x + 10, y)
   y += 11
+  doc.setFillColor(...bg)
+  const content = task.content?.trim() || L.noContent
+  const contentH = measureWrappedHeight(doc, content, maxWidth - 24, 11) + 10
+  y = ensureSpace(doc, y, contentH, margin, pageH)
+  roundedRect(doc, x + 8, y - 2, maxWidth - 8, contentH, 4, 'F')
   doc.setFont(fontReg, 'normal')
-  y = writeWrapped(doc, task.content?.trim() || L.noContent, x, y, maxWidth, 11)
-  y += 6
+  doc.setFontSize(9)
+  doc.setTextColor(...COLORS.slate)
+  y = writeWrapped(doc, content, x + 14, y + 8, maxWidth - 24, 11)
+  y += 8
 
   y = drawAttachments(
     doc,
     task.attachments,
     includeAttachments,
-    x,
+    x + 8,
     y,
-    maxWidth,
+    maxWidth - 8,
     margin,
     pageH,
     L,
@@ -517,21 +745,27 @@ function drawTaskBlock(
     y = ensureSpace(doc, y, 16, margin, pageH)
     doc.setFont(fontBold, 'bold')
     doc.setFontSize(10)
-    doc.text(L.memos, x, y)
+    doc.setTextColor(...COLORS.brandDark)
+    doc.text(L.memos, x + 10, y)
     y += 12
     doc.setFont(fontReg, 'normal')
     doc.setFontSize(9)
     const memos = task.memos.slice(0, 8)
     for (const m of memos) {
       y = ensureSpace(doc, y, 16, margin, pageH)
+      doc.setTextColor(...COLORS.muted)
       const head = `${m.author || '—'} · ${formatDateTime(m.createdAt, locale)}`
-      y = writeWrapped(doc, head, x, y, maxWidth, 11)
-      y = writeWrapped(doc, m.content || L.noContent, x + 6, y, maxWidth - 6, 11)
+      y = writeWrapped(doc, head, x + 10, y, maxWidth - 12, 11)
+      doc.setTextColor(...COLORS.slate)
+      y = writeWrapped(doc, m.content || L.noContent, x + 16, y, maxWidth - 18, 11)
       y += 4
     }
   }
 
-  return y + 8
+  doc.setDrawColor(...COLORS.line)
+  doc.setLineWidth(0.4)
+  doc.line(x + 8, y + 2, x + maxWidth, y + 2)
+  return y + 10
 }
 
 function drawSectionNode(
@@ -549,21 +783,42 @@ function drawSectionNode(
   fontBold: string,
   compactTasks = false
 ) {
-  y = ensureSpace(doc, y, 24, margin, pageH)
-  doc.setFont(fontBold, 'bold')
-  doc.setFontSize(section.depth === 0 ? 13 : 11)
+  y = ensureSpace(doc, y, 28, margin, pageH)
   const indent = x + section.depth * 8
-  y = writeWrapped(doc, `${L.section}: ${section.title}`, indent, y, maxWidth - section.depth * 8, 14)
-  y += 2
+  const bannerW = maxWidth - section.depth * 8
+  const isRoot = section.depth === 0
+  const bannerH = isRoot ? 22 : 18
+  doc.setFillColor(...(isRoot ? COLORS.brandSoft : COLORS.card))
+  roundedRect(doc, indent, y, bannerW, bannerH, 4, 'F')
+  doc.setFillColor(...(isRoot ? COLORS.brand : COLORS.brandDark))
+  doc.rect(indent, y, 3, bannerH, 'F')
+  doc.setFont(fontBold, 'bold')
+  doc.setFontSize(isRoot ? 11 : 10)
+  doc.setTextColor(...(isRoot ? COLORS.brandDark : COLORS.sectionChild))
+  doc.text(
+    `${L.section}  ${section.title}`,
+    indent + 10,
+    y + (isRoot ? 14 : 12)
+  )
+  y += bannerH + 6
   doc.setFont(fontReg, 'normal')
   doc.setFontSize(9)
+  doc.setTextColor(...COLORS.slate)
   if (section.description?.trim()) {
-    doc.setFont(fontBold, 'bold')
-    doc.text(L.description, indent, y)
-    y += 11
+    doc.setFillColor(255, 255, 255)
+    const desc = section.description.trim()
+    const dh = measureWrappedHeight(doc, desc, bannerW - 12, 11) + 8
+    y = ensureSpace(doc, y, dh, margin, pageH)
+    roundedRect(doc, indent, y, bannerW, dh, 4, 'F')
+    doc.setDrawColor(...COLORS.line)
+    doc.setLineWidth(0.4)
+    roundedRect(doc, indent, y, bannerW, dh, 4, 'S')
     doc.setFont(fontReg, 'normal')
-    y = writeWrapped(doc, section.description.trim(), indent, y, maxWidth - section.depth * 8, 11)
-    y += 4
+    doc.setFontSize(8)
+    doc.setTextColor(...COLORS.muted)
+    writeWrapped(doc, desc, indent + 6, y + 10, bannerW - 12, 11)
+    y += dh + 6
+    doc.setTextColor(...COLORS.slate)
   }
 
   y = drawAttachments(
@@ -582,31 +837,74 @@ function drawSectionNode(
 
   if (compactTasks) {
     for (const task of section.tasks) {
-      y = ensureSpace(doc, y, 16, margin, pageH)
+      const innerW = maxWidth - section.depth * 8 - 4
+      const left = indent + 2
       doc.setFont(fontBold, 'bold')
       doc.setFontSize(10)
-      y = writeWrapped(doc, `• ${task.title}`, indent + 4, y, maxWidth - section.depth * 8 - 4, 12)
+      const titleH = measureWrappedHeight(doc, task.title, innerW - 16, 12)
       doc.setFont(fontReg, 'normal')
       doc.setFontSize(8)
-      const bits = [
+      const schedule = scheduleLabel(task, locale)
+      const assignees = task.assignees?.join(', ') || ''
+      const content = task.content?.trim().slice(0, 220) || ''
+      const metaLine = [schedule, assignees].filter(Boolean).join('  ·  ')
+      const metaH = metaLine
+        ? measureWrappedHeight(doc, metaLine, innerW - 16, 10)
+        : 0
+      const contentH = content
+        ? measureWrappedHeight(doc, content, innerW - 16, 10)
+        : 0
+      const pct = taskPercent(task)
+      const cardH = 14 + titleH + (metaH ? metaH + 2 : 0) + (contentH ? contentH + 4 : 0) + 14
+      y = ensureSpace(doc, y, cardH + 6, margin, pageH)
+
+      const { fg, bg } = statusPalette(task.status)
+      doc.setFillColor(...COLORS.white)
+      doc.setDrawColor(...COLORS.line)
+      doc.setLineWidth(0.6)
+      roundedRect(doc, left, y, innerW, cardH, 5, 'FD')
+      doc.setFillColor(...fg)
+      doc.rect(left, y, 3.5, cardH, 'F')
+
+      let cy = y + 12
+      doc.setFont(fontBold, 'bold')
+      doc.setFontSize(10)
+      doc.setTextColor(...COLORS.slate)
+      const titleLines = doc.splitTextToSize(task.title, innerW - 78) as string[]
+      doc.text(titleLines, left + 10, cy)
+      drawStatusPill(
+        doc,
         statusLabel(task.status, L),
-        scheduleLabel(task, locale),
-        task.assignees?.join(', ') || '',
-      ].filter(Boolean)
-      if (bits.length) {
-        y = writeWrapped(doc, bits.join(' · '), indent + 10, y, maxWidth - section.depth * 8 - 10, 10)
+        task.status,
+        left + innerW - 10 - (doc.getTextWidth(statusLabel(task.status, L)) + 10),
+        cy,
+        fontReg
+      )
+      cy += titleH + 2
+
+      if (metaLine) {
+        doc.setFont(fontReg, 'normal')
+        doc.setFontSize(7.5)
+        doc.setTextColor(...COLORS.muted)
+        cy = writeWrapped(doc, metaLine, left + 10, cy, innerW - 16, 10)
+        cy += 2
       }
-      if (task.content?.trim()) {
-        y = writeWrapped(
-          doc,
-          task.content.trim().slice(0, 280),
-          indent + 10,
-          y,
-          maxWidth - section.depth * 8 - 10,
-          10
-        )
+      if (content) {
+        doc.setFont(fontReg, 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(...COLORS.slate)
+        cy = writeWrapped(doc, content, left + 10, cy, innerW - 16, 10)
+        cy += 4
       }
-      y += 6
+
+      doc.setFont(fontReg, 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(...COLORS.muted)
+      doc.text(`${pct}%`, left + 10, y + cardH - 6)
+      drawProgressBar(doc, left + 28, y + cardH - 11, innerW - 42, pct, fg)
+
+      y += cardH + 6
+      doc.setTextColor(...COLORS.slate)
     }
   } else {
     for (const task of section.tasks) {
@@ -709,39 +1007,55 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
   }
 
-  const headerLines = [
-    `${L.project}: ${input.projectTitle}`,
-    `${L.status}: ${input.projectStatus}`,
-    input.ownerName ? `${L.owner}: ${input.ownerName}` : '',
-    input.contactName ? `${L.contact}: ${input.contactName}` : '',
-    input.contactPhone ? `${L.phone}: ${input.contactPhone}` : '',
-    input.contactEmail ? `${L.email}: ${input.contactEmail}` : '',
-    input.startDate ? `${L.startDate}: ${formatDay(input.startDate)}` : '',
-    input.endDate ? `${L.endDate}: ${formatDay(input.endDate)}` : '',
-    input.completion
-      ? `${L.completion}: ${input.completion.percent}% (${input.completion.done}/${input.completion.total})`
-      : '',
-    input.completion
-      ? `${L.completionDetail}: ${input.completion.done} / ${input.completion.doing} / ${input.completion.todo}`
-      : '',
-    `${L.generatedAt}: ${formatDateTime(new Date(), locale)}`,
-  ].filter(Boolean)
-  for (const line of headerLines) {
-    y = writeWrapped(doc, line, margin, y, maxWidth, 12)
+  const useRichMeta =
+    input.mode === 'sectionList' ||
+    input.mode === 'progress' ||
+    input.mode === 'schedule' ||
+    input.mode === 'finance'
+
+  if (useRichMeta) {
+    y = drawMetaSummaryCards(
+      doc,
+      input,
+      L,
+      locale,
+      margin,
+      pageW,
+      y,
+      fontReg,
+      fontBold
+    )
+  } else {
+    const headerLines = [
+      `${L.project}: ${input.projectTitle}`,
+      `${L.status}: ${input.projectStatus}`,
+      input.ownerName ? `${L.owner}: ${input.ownerName}` : '',
+      input.contactName ? `${L.contact}: ${input.contactName}` : '',
+      input.contactPhone ? `${L.phone}: ${input.contactPhone}` : '',
+      input.contactEmail ? `${L.email}: ${input.contactEmail}` : '',
+      input.startDate ? `${L.startDate}: ${formatDay(input.startDate)}` : '',
+      input.endDate ? `${L.endDate}: ${formatDay(input.endDate)}` : '',
+      input.completion
+        ? `${L.completion}: ${input.completion.percent}% (${input.completion.done}/${input.completion.total})`
+        : '',
+      input.completion
+        ? `${L.completionDetail}: ${input.completion.done} / ${input.completion.doing} / ${input.completion.todo}`
+        : '',
+      `${L.generatedAt}: ${formatDateTime(new Date(), locale)}`,
+    ].filter(Boolean)
+    for (const line of headerLines) {
+      y = writeWrapped(doc, line, margin, y, maxWidth, 12)
+    }
+    if (input.projectNote?.trim()) {
+      y += 4
+      doc.setFont(fontBold, 'bold')
+      doc.text(L.note, margin, y)
+      y += 12
+      doc.setFont(fontReg, 'normal')
+      y = writeWrapped(doc, input.projectNote.trim(), margin, y, maxWidth, 11)
+    }
+    y += 10
   }
-  if (
-    input.projectNote?.trim() &&
-    input.mode !== 'finance' &&
-    input.mode !== 'schedule'
-  ) {
-    y += 4
-    doc.setFont(fontBold, 'bold')
-    doc.text(L.note, margin, y)
-    y += 12
-    doc.setFont(fontReg, 'normal')
-    y = writeWrapped(doc, input.projectNote.trim(), margin, y, maxWidth, 11)
-  }
-  y += 10
 
   if (input.mode === 'schedule') {
     const tasks = sortTasksForSchedule(flattenTasks(input.sections))
@@ -773,26 +1087,40 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
         styles: {
           font: fontReg,
           fontSize: 7.5,
-          cellPadding: 3,
+          cellPadding: 3.5,
           overflow: 'linebreak',
           valign: 'top',
         },
         headStyles: {
-          fillColor: [0, 122, 255],
+          fillColor: COLORS.brand,
           textColor: 255,
           font: fontReg,
           fontStyle: 'bold',
           fontSize: 8,
         },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
           0: { cellWidth: 68 },
           1: { cellWidth: 68 },
           2: { cellWidth: 72 },
           3: { cellWidth: 78 },
-          4: { cellWidth: 42 },
+          4: { cellWidth: 48 },
           5: { cellWidth: 58 },
         },
         margin: { left: margin, right: margin },
+        didParseCell: (data) => {
+          if (data.section !== 'body' || data.column.index !== 4) return
+          const raw = String(data.cell.raw || '')
+          if (raw === L.statusDone) {
+            data.cell.styles.textColor = COLORS.done
+            data.cell.styles.fontStyle = 'bold'
+          } else if (raw === L.statusDoing) {
+            data.cell.styles.textColor = COLORS.doing
+            data.cell.styles.fontStyle = 'bold'
+          } else {
+            data.cell.styles.textColor = COLORS.todo
+          }
+        },
       })
     }
     return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer)
@@ -809,14 +1137,37 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
         currency: 'HKD',
         minimumFractionDigits: 2,
       }).format(n)
-    doc.setFont(fontBold, 'bold')
-    doc.setFontSize(10)
-    doc.text(`${L.income}: ${fmt(income)}`, margin, y)
-    doc.text(`${L.expense}: ${fmt(expense)}`, margin + 150, y)
-    doc.text(`${L.balance}: ${fmt(balance)}`, margin + 300, y)
-    y += 14
+    const finCards: Array<{ label: string; value: string; soft: Rgb; accent: Rgb }> = [
+      { label: L.income, value: fmt(income), soft: COLORS.doneSoft, accent: COLORS.done },
+      { label: L.expense, value: fmt(expense), soft: [254, 242, 242], accent: [244, 63, 94] },
+      {
+        label: L.balance,
+        value: fmt(balance),
+        soft: COLORS.brandSoft,
+        accent: balance >= 0 ? COLORS.brand : [244, 63, 94],
+      },
+    ]
+    const gap = 8
+    const cardW = (maxWidth - gap * 2) / 3
+    finCards.forEach((c, i) => {
+      const cx = margin + i * (cardW + gap)
+      doc.setFillColor(...c.soft)
+      roundedRect(doc, cx, y, cardW, 34, 6, 'F')
+      doc.setFillColor(...c.accent)
+      doc.rect(cx, y, 3, 34, 'F')
+      doc.setFont(fontReg, 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(...COLORS.muted)
+      doc.text(c.label, cx + 10, y + 12)
+      doc.setFont(fontBold, 'bold')
+      doc.setFontSize(10)
+      doc.setTextColor(...COLORS.slate)
+      doc.text(c.value, cx + 10, y + 26)
+    })
+    y += 44
     if (ledger.length === 0) {
       doc.setFont(fontReg, 'normal')
+      doc.setTextColor(...COLORS.muted)
       doc.text(L.emptyLedger, margin, y)
     } else {
       const sorted = [...ledger].sort((a, b) => (timeMs(a.date) ?? 0) - (timeMs(b.date) ?? 0))
@@ -830,13 +1181,14 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
           e.note?.trim() || '—',
           e.createdBy || '—',
         ]),
-        styles: { font: fontReg, fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+        styles: { font: fontReg, fontSize: 8, cellPadding: 3.5, overflow: 'linebreak' },
         headStyles: {
-          fillColor: [0, 122, 255],
+          fillColor: COLORS.brand,
           textColor: 255,
           font: fontReg,
           fontStyle: 'bold',
         },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
         margin: { left: margin, right: margin },
       })
     }
