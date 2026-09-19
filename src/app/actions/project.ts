@@ -26,7 +26,7 @@ export type SectionAccessGrantInput = {
   expiresAt?: string | null
 }
 
-export const UNCATEGORIZED_SCOPE_KEY = '__uncategorized__'
+const UNCATEGORIZED_SCOPE_KEY = '__uncategorized__'
 
 type TaskGrantRow = {
   id: string
