@@ -508,6 +508,7 @@ model Project {
 
   members  ProjectMember[]
   tasks    ProjectTask[]
+  sections ProjectSection[]
   ledger   ProjectLedgerEntry[]
   taskAccesses ProjectTaskAccess[]
   attachments Attachment[] @relation("ProjectAttachments")
@@ -532,6 +533,25 @@ model ProjectMember {
   @@index([userId])
 }
 
+/** Up to 2 levels under a project: root section → child section → tasks. */
+model ProjectSection {
+  id        String   @id @default(uuid())
+  title     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectId String
+  parentId  String?
+
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent   ProjectSection? @relation("ProjectSectionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children ProjectSection[] @relation("ProjectSectionTree")
+  tasks    ProjectTask[]
+
+  @@index([projectId, parentId, sortOrder])
+}
+
 model ProjectTask {
   id           String   @id @default(uuid())
   title        String
@@ -544,13 +564,15 @@ model ProjectTask {
   updatedAt    DateTime @updatedAt
 
   projectId    String
+  sectionId    String?
   createdById  String
   /** @deprecated prefer assignees; kept for migration compatibility */
   assigneeId   String?
 
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User    @relation("UserCreatedProjectTasks", fields: [createdById], references: [id])
-  assignee  User?   @relation("UserAssignedProjectTasks", fields: [assigneeId], references: [id])
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  section   ProjectSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  createdBy User            @relation("UserCreatedProjectTasks", fields: [createdById], references: [id])
+  assignee  User?           @relation("UserAssignedProjectTasks", fields: [assigneeId], references: [id])
   assignees ProjectTaskAssignee[]
 
   attachments Attachment[] @relation("ProjectTaskAttachments")
@@ -558,6 +580,7 @@ model ProjectTask {
   taskAccesses ProjectTaskAccess[]
 
   @@index([projectId, status, dueDate])
+  @@index([sectionId])
 }
 
 /** Temporary (non-resident) access to specific project tasks — not a ProjectMember. */

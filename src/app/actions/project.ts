@@ -66,9 +66,26 @@ const projectInclude = {
     },
     orderBy: { createdAt: 'asc' as const },
   },
+  sections: {
+    where: { parentId: null },
+    orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+    include: {
+      children: {
+        orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+      },
+    },
+  },
   tasks: {
-    orderBy: [{ status: 'asc' as const }, { dueDate: 'asc' as const }, { createdAt: 'desc' as const }],
-    include: taskDetailInclude,
+    orderBy: [
+      { sortOrder: 'asc' as const },
+      { status: 'asc' as const },
+      { dueDate: 'asc' as const },
+      { createdAt: 'desc' as const },
+    ],
+    include: {
+      ...taskDetailInclude,
+      section: { select: { id: true, title: true, parentId: true } },
+    },
   },
   ledger: {
     orderBy: [{ date: 'desc' as const }, { createdAt: 'desc' as const }],
@@ -84,6 +101,17 @@ const projectInclude = {
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
   },
+}
+
+async function assertValidTaskSection(projectId: string, sectionId: string | null | undefined) {
+  if (!sectionId) return null
+  const section = await prisma.projectSection.findUnique({ where: { id: sectionId } })
+  const locale = await getCurrentLocale()
+  const t = createTranslator(locale)
+  if (!section || section.projectId !== projectId) {
+    throw new Error(t('projectSectionNotFound'))
+  }
+  return section
 }
 
 function isGrantActive(expiresAt?: Date | null) {
@@ -367,14 +395,27 @@ export async function getProjectDetail(projectId: string) {
       where: { id: projectId },
       include: {
         owner: { select: { id: true, roleName: true, email: true } },
+        sections: {
+          where: { parentId: null },
+          orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+          include: {
+            children: {
+              orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+            },
+          },
+        },
         tasks: {
           where: { id: { in: taskIds } },
           orderBy: [
+            { sortOrder: 'asc' as const },
             { status: 'asc' as const },
             { dueDate: 'asc' as const },
             { createdAt: 'desc' as const },
           ],
-          include: taskDetailInclude,
+          include: {
+            ...taskDetailInclude,
+            section: { select: { id: true, title: true, parentId: true } },
+          },
         },
       },
     })
@@ -827,6 +868,102 @@ export async function setProjectMembers(projectId: string, memberIds: string[]) 
   }
 }
 
+export async function createProjectSection(
+  projectId: string,
+  input: { title: string; parentId?: string | null }
+) {
+  try {
+    await assertProjectMember(projectId)
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    const title = String(input.title || '').trim()
+    if (!title) return { success: false, error: t('projectSectionTitleRequired') }
+
+    const parentId = input.parentId ? String(input.parentId) : null
+    if (parentId) {
+      const parent = await prisma.projectSection.findUnique({ where: { id: parentId } })
+      if (!parent || parent.projectId !== projectId) {
+        return { success: false, error: t('projectSectionNotFound') }
+      }
+      if (parent.parentId) {
+        return { success: false, error: t('projectSectionDepthExceeded') }
+      }
+    }
+
+    const maxSort = await prisma.projectSection.aggregate({
+      where: { projectId, parentId },
+      _max: { sortOrder: true },
+    })
+
+    await prisma.projectSection.create({
+      data: {
+        projectId,
+        parentId,
+        title,
+        sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
+      },
+    })
+    revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function updateProjectSection(
+  sectionId: string,
+  input: { title: string }
+) {
+  try {
+    const section = await prisma.projectSection.findUnique({ where: { id: sectionId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!section) return { success: false, error: t('projectSectionNotFound') }
+    await assertProjectMember(section.projectId)
+
+    const title = String(input.title || '').trim()
+    if (!title) return { success: false, error: t('projectSectionTitleRequired') }
+
+    await prisma.projectSection.update({
+      where: { id: sectionId },
+      data: { title },
+    })
+    revalidateProjects(section.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function deleteProjectSection(sectionId: string) {
+  try {
+    const section = await prisma.projectSection.findUnique({
+      where: { id: sectionId },
+      include: { _count: { select: { children: true } } },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!section) return { success: false, error: t('projectSectionNotFound') }
+    await assertProjectMember(section.projectId)
+
+    if (section._count.children > 0) {
+      return { success: false, error: t('projectSectionHasChildren') }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectTask.updateMany({
+        where: { sectionId },
+        data: { sectionId: null },
+      })
+      await tx.projectSection.delete({ where: { id: sectionId } })
+    })
+    revalidateProjects(section.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 export async function createProjectTask(
   projectId: string,
   input: {
@@ -835,6 +972,7 @@ export async function createProjectTask(
     dueDate?: string | null
     reminderDays?: number
     note?: string
+    sectionId?: string | null
     assigneeId?: string | null
     assigneeIds?: string[]
   }
@@ -845,6 +983,10 @@ export async function createProjectTask(
     const t = createTranslator(locale)
     const title = String(input.title || '').trim()
     if (!title) return { success: false, error: t('projectTaskTitleRequired') }
+
+    const sectionId =
+      input.sectionId === undefined ? null : input.sectionId ? String(input.sectionId) : null
+    await assertValidTaskSection(projectId, sectionId)
 
     const assigneeIds = Array.from(
       new Set(
@@ -859,6 +1001,7 @@ export async function createProjectTask(
       const created = await tx.projectTask.create({
         data: {
           projectId,
+          sectionId,
           title,
           status: input.status || 'TODO',
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
@@ -894,6 +1037,7 @@ export async function updateProjectTask(
     dueDate?: string | null
     reminderDays?: number
     note?: string
+    sectionId?: string | null
     assigneeId?: string | null
     assigneeIds?: string[]
   }
@@ -907,6 +1051,13 @@ export async function updateProjectTask(
 
     const title = String(input.title || '').trim()
     if (!title) return { success: false, error: t('projectTaskTitleRequired') }
+
+    if (input.sectionId !== undefined) {
+      await assertValidTaskSection(
+        task.projectId,
+        input.sectionId ? String(input.sectionId) : null
+      )
+    }
 
     const assigneeIds =
       input.assigneeIds !== undefined
@@ -924,6 +1075,9 @@ export async function updateProjectTask(
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
           reminderDays: Number(input.reminderDays ?? 7) || 7,
           note: input.note?.trim() || null,
+          ...(input.sectionId !== undefined
+            ? { sectionId: input.sectionId ? String(input.sectionId) : null }
+            : {}),
           ...(assigneeIds
             ? { assigneeId: assigneeIds[0] || null }
             : input.assigneeId !== undefined
