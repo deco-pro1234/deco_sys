@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { getReportRecords, getReportActivities, getReportContracts, ReportFilter } from '../actions/report'
 import { requestModifyRecord } from '../actions/modify'
 import { deleteRecord } from '../actions/record'
@@ -92,15 +92,389 @@ function csvEscape(value: string) {
   return s
 }
 
+type TranslateFn = ReturnType<typeof createTranslator>
+
+type ReportColumnId =
+  | 'recordIdShort'
+  | 'date'
+  | 'type'
+  | 'categories'
+  | 'pool'
+  | 'role'
+  | 'amount'
+  | 'attachmentCount'
+  | 'note'
+  | 'status'
+  | 'activityTitle'
+  | 'activityDate'
+  | 'reminderDays'
+  | 'activityVisibility'
+  | 'contractTitle'
+  | 'effectiveDate'
+  | 'expiryDate'
+
+type ExportCol = {
+  id: string
+  head: string
+  width?: number | 'auto'
+  halign?: 'left' | 'center' | 'right'
+  cell: string
+}
+
+const RECORD_EXPORT_COLUMNS: Array<{ id: ReportColumnId; labelKey: string }> = [
+  { id: 'recordIdShort', labelKey: 'recordIdShort' },
+  { id: 'date', labelKey: 'date' },
+  { id: 'type', labelKey: 'type' },
+  { id: 'categories', labelKey: 'categoryPath' },
+  { id: 'pool', labelKey: 'pool' },
+  { id: 'role', labelKey: 'role' },
+  { id: 'amount', labelKey: 'amount' },
+  { id: 'attachmentCount', labelKey: 'attachmentCount' },
+  { id: 'note', labelKey: 'note' },
+  { id: 'status', labelKey: 'status' },
+]
+
+const ACTIVITY_EXPORT_COLUMNS: Array<{ id: ReportColumnId; labelKey: string }> = [
+  { id: 'recordIdShort', labelKey: 'recordIdShort' },
+  { id: 'activityTitle', labelKey: 'activityTitle' },
+  { id: 'activityDate', labelKey: 'activityDate' },
+  { id: 'reminderDays', labelKey: 'reminderDays' },
+  { id: 'activityVisibility', labelKey: 'activityVisibility' },
+  { id: 'role', labelKey: 'role' },
+  { id: 'attachmentCount', labelKey: 'attachmentCount' },
+  { id: 'note', labelKey: 'note' },
+]
+
+const CONTRACT_EXPORT_COLUMNS: Array<{ id: ReportColumnId; labelKey: string }> = [
+  { id: 'recordIdShort', labelKey: 'recordIdShort' },
+  { id: 'contractTitle', labelKey: 'contractTitle' },
+  { id: 'type', labelKey: 'type' },
+  { id: 'effectiveDate', labelKey: 'effectiveDate' },
+  { id: 'expiryDate', labelKey: 'expiryDate' },
+  { id: 'categories', labelKey: 'categoryPath' },
+  { id: 'pool', labelKey: 'pool' },
+  { id: 'amount', labelKey: 'amount' },
+  { id: 'role', labelKey: 'role' },
+  { id: 'attachmentCount', labelKey: 'attachmentCount' },
+  { id: 'note', labelKey: 'note' },
+]
+
+function defaultVisibleMap(cols: Array<{ id: ReportColumnId }>): Record<ReportColumnId, boolean> {
+  const map = {} as Record<ReportColumnId, boolean>
+  for (const col of cols) map[col.id] = true
+  return map
+}
+
+function buildColumnStyles(cols: ExportCol[]) {
+  const styles: Record<number, { cellWidth?: number | 'auto'; halign?: 'left' | 'center' | 'right' }> = {}
+  cols.forEach((col, index) => {
+    const style: { cellWidth?: number | 'auto'; halign?: 'left' | 'center' | 'right' } = {}
+    if (col.width !== undefined) style.cellWidth = col.width
+    if (col.halign) style.halign = col.halign
+    if (Object.keys(style).length > 0) styles[index] = style
+  })
+  return styles
+}
+
+function buildRecordExportCols(
+  r: any,
+  visible: Record<string, boolean>,
+  t: TranslateFn,
+  locale: Locale,
+  dateLocale: string
+): ExportCol[] {
+  const cols: ExportCol[] = []
+  if (visible.recordIdShort) {
+    cols.push({ id: 'recordIdShort', head: t('recordIdShort'), cell: r.id.slice(-8), width: 16 })
+  }
+  if (visible.date) {
+    cols.push({
+      id: 'date',
+      head: t('date'),
+      cell: new Date(r.date).toLocaleDateString(dateLocale),
+      width: 20,
+    })
+  }
+  if (visible.type) {
+    cols.push({
+      id: 'type',
+      head: t('type'),
+      cell: r.type === 'INCOME' ? t('income') : t('expense'),
+      width: 14,
+    })
+  }
+  if (visible.categories) {
+    cols.push({ id: 'mainCategory', head: t('mainCategory'), cell: r.category?.name || '-', width: 24 })
+    cols.push({ id: 'subCategory', head: t('subCategory'), cell: r.subCategory?.name || '-', width: 24 })
+    cols.push({ id: 'grandCategory', head: t('grandCategory'), cell: r.thirdCategory?.name || '-', width: 24 })
+  }
+  if (visible.pool) {
+    cols.push({ id: 'pool', head: t('pool'), cell: r.pool?.name || '-', width: 22 })
+  }
+  if (visible.role) {
+    cols.push({ id: 'role', head: t('role'), cell: r.user?.roleName || '-', width: 18 })
+  }
+  if (visible.amount) {
+    cols.push({
+      id: 'amount',
+      head: t('amount'),
+      cell: formatCurrency(locale, r.amount),
+      width: 22,
+      halign: 'right',
+    })
+  }
+  if (visible.attachmentCount) {
+    cols.push({
+      id: 'attachmentCount',
+      head: t('attachmentCount'),
+      cell: String(attachmentCountOf(r)),
+      width: 12,
+      halign: 'center',
+    })
+  }
+  if (visible.note) {
+    cols.push({ id: 'note', head: t('note'), cell: r.note || '-', width: 'auto' })
+  }
+  if (visible.status) {
+    cols.push({
+      id: 'status',
+      head: t('status'),
+      cell: r.status === 'PENDING' ? t('pendingApproval') : t('approvedStored'),
+      width: 18,
+    })
+  }
+  return cols
+}
+
+function buildActivityExportCols(
+  a: any,
+  visible: Record<string, boolean>,
+  t: TranslateFn,
+  dateLocale: string
+): ExportCol[] {
+  const cols: ExportCol[] = []
+  if (visible.recordIdShort) {
+    cols.push({ id: 'recordIdShort', head: t('recordIdShort'), cell: a.id.slice(-8) })
+  }
+  if (visible.activityTitle) {
+    cols.push({ id: 'activityTitle', head: t('activityTitle'), cell: a.title || '-' })
+  }
+  if (visible.activityDate) {
+    cols.push({
+      id: 'activityDate',
+      head: t('activityDate'),
+      cell: new Date(a.eventDate).toLocaleDateString(dateLocale),
+    })
+  }
+  if (visible.reminderDays) {
+    cols.push({ id: 'reminderDays', head: t('reminderDays'), cell: String(a.reminderDays ?? '-') })
+  }
+  if (visible.activityVisibility) {
+    cols.push({
+      id: 'activityVisibility',
+      head: t('activityVisibility'),
+      cell: a.visibility === 'PRIVATE' ? t('privateActivity') : t('publicActivity'),
+    })
+  }
+  if (visible.role) {
+    cols.push({ id: 'role', head: t('role'), cell: a.user?.roleName || '-' })
+  }
+  if (visible.attachmentCount) {
+    cols.push({
+      id: 'attachmentCount',
+      head: t('attachmentCount'),
+      cell: String(attachmentCountOf(a)),
+      halign: 'center',
+    })
+  }
+  if (visible.note) {
+    cols.push({ id: 'note', head: t('note'), cell: a.note || '-' })
+  }
+  return cols
+}
+
+function buildContractExportCols(
+  c: any,
+  visible: Record<string, boolean>,
+  t: TranslateFn,
+  locale: Locale,
+  dateLocale: string
+): ExportCol[] {
+  const cols: ExportCol[] = []
+  if (visible.recordIdShort) {
+    cols.push({ id: 'recordIdShort', head: t('recordIdShort'), cell: c.id.slice(-8) })
+  }
+  if (visible.contractTitle) {
+    cols.push({ id: 'contractTitle', head: t('contractTitle'), cell: c.title || '-' })
+  }
+  if (visible.type) {
+    cols.push({
+      id: 'type',
+      head: t('type'),
+      cell: c.type === 'INCOME' ? t('income') : t('expense'),
+    })
+  }
+  if (visible.effectiveDate) {
+    cols.push({
+      id: 'effectiveDate',
+      head: t('effectiveDate'),
+      cell: new Date(c.effectiveDate).toLocaleDateString(dateLocale),
+    })
+  }
+  if (visible.expiryDate) {
+    cols.push({
+      id: 'expiryDate',
+      head: t('expiryDate'),
+      cell: new Date(c.expiryDate).toLocaleDateString(dateLocale),
+    })
+  }
+  if (visible.categories) {
+    cols.push({ id: 'mainCategory', head: t('mainCategory'), cell: c.category?.name || '-' })
+    cols.push({ id: 'subCategory', head: t('subCategory'), cell: c.subCategory?.name || '-' })
+    cols.push({ id: 'grandCategory', head: t('grandCategory'), cell: c.thirdCategory?.name || '-' })
+  }
+  if (visible.pool) {
+    cols.push({ id: 'pool', head: t('pool'), cell: c.pool?.name || '-' })
+  }
+  if (visible.amount) {
+    cols.push({
+      id: 'amount',
+      head: t('amount'),
+      cell: formatCurrency(locale, c.amount),
+      halign: 'right',
+    })
+  }
+  if (visible.role) {
+    cols.push({ id: 'role', head: t('role'), cell: c.user?.roleName || '-' })
+  }
+  if (visible.attachmentCount) {
+    cols.push({
+      id: 'attachmentCount',
+      head: t('attachmentCount'),
+      cell: String(attachmentCountOf(c)),
+      halign: 'center',
+    })
+  }
+  if (visible.note) {
+    cols.push({ id: 'note', head: t('note'), cell: c.note || '-' })
+  }
+  return cols
+}
+
+function buildAccountingExportCols(
+  row: {
+    record: any
+    voucherNo: string
+    dateStr: string
+    typeLabel: string
+    fileNames: string[]
+  },
+  visible: Record<string, boolean>,
+  t: TranslateFn,
+  locale: Locale,
+  opts?: { includeVoucherFile?: boolean; includeRecordId?: boolean; includeStatus?: boolean }
+): ExportCol[] {
+  const r = row.record
+  const cols: ExportCol[] = [
+    { id: 'voucherNo', head: t('voucherNo'), cell: row.voucherNo, width: 14 },
+  ]
+  if (visible.date) {
+    cols.push({ id: 'date', head: t('date'), cell: row.dateStr, width: 20 })
+  }
+  if (visible.type) {
+    cols.push({ id: 'type', head: t('type'), cell: row.typeLabel, width: 14 })
+  }
+  if (visible.categories) {
+    cols.push({ id: 'mainCategory', head: t('mainCategory'), cell: r.category?.name || '-', width: 24 })
+    cols.push({ id: 'subCategory', head: t('subCategory'), cell: r.subCategory?.name || '-', width: 24 })
+    cols.push({ id: 'grandCategory', head: t('grandCategory'), cell: r.thirdCategory?.name || '-', width: 24 })
+  }
+  if (visible.pool) {
+    cols.push({ id: 'pool', head: t('pool'), cell: r.pool?.name || '-', width: 22 })
+  }
+  if (visible.role) {
+    cols.push({ id: 'role', head: t('role'), cell: r.user?.roleName || '-', width: 18 })
+  }
+  if (visible.amount) {
+    cols.push({
+      id: 'amount',
+      head: t('amount'),
+      cell: formatCurrency(locale, r.amount),
+      width: 22,
+      halign: 'right',
+    })
+  }
+  if (visible.note) {
+    cols.push({ id: 'note', head: t('note'), cell: r.note || '-', width: 36 })
+  }
+  if (opts?.includeStatus && visible.status) {
+    cols.push({
+      id: 'status',
+      head: t('status'),
+      cell: r.status === 'PENDING' ? t('pendingApproval') : t('approvedStored'),
+    })
+  }
+  if (opts?.includeRecordId && visible.recordIdShort) {
+    cols.push({ id: 'recordId', head: t('recordId'), cell: r.id })
+  }
+  if (opts?.includeVoucherFile !== false) {
+    cols.push({
+      id: 'voucherFile',
+      head: t('voucherFile'),
+      cell: row.fileNames.length > 0 ? row.fileNames.join('; ') : t('noVoucher'),
+      width: 'auto',
+    })
+  }
+  return cols
+}
+
 export default function ReportClient({ categories, users, pools, locale }: Props) {
   const t = createTranslator(locale)
   const dateLocale = locale === 'en' ? 'en-HK' : 'zh-HK'
   const [reportTab, setReportTab] = useState<ReportTab>('records')
   const [exportLocale, setExportLocale] = useState<Locale>(locale)
+  const [recordColumns, setRecordColumns] = useState(() => defaultVisibleMap(RECORD_EXPORT_COLUMNS))
+  const [activityColumns, setActivityColumns] = useState(() => defaultVisibleMap(ACTIVITY_EXPORT_COLUMNS))
+  const [contractColumns, setContractColumns] = useState(() => defaultVisibleMap(CONTRACT_EXPORT_COLUMNS))
 
   useEffect(() => {
     setExportLocale(locale)
   }, [locale])
+
+  const activeColumnOptions = useMemo(() => {
+    if (reportTab === 'activities') return ACTIVITY_EXPORT_COLUMNS
+    if (reportTab === 'contracts') return CONTRACT_EXPORT_COLUMNS
+    return RECORD_EXPORT_COLUMNS
+  }, [reportTab])
+
+  const activeColumnVisible = useMemo(() => {
+    if (reportTab === 'activities') return activityColumns
+    if (reportTab === 'contracts') return contractColumns
+    return recordColumns
+  }, [reportTab, activityColumns, contractColumns, recordColumns])
+
+  const setActiveColumnVisible = (id: ReportColumnId, checked: boolean) => {
+    const updater = (prev: Record<ReportColumnId, boolean>) => ({ ...prev, [id]: checked })
+    if (reportTab === 'activities') setActivityColumns(updater)
+    else if (reportTab === 'contracts') setContractColumns(updater)
+    else setRecordColumns(updater)
+  }
+
+  const setAllActiveColumns = (checked: boolean) => {
+    const next = defaultVisibleMap(activeColumnOptions)
+    for (const key of Object.keys(next) as ReportColumnId[]) next[key] = checked
+    if (reportTab === 'activities') setActivityColumns(next)
+    else if (reportTab === 'contracts') setContractColumns(next)
+    else setRecordColumns(next)
+  }
+
+  const visibleColumnCount = activeColumnOptions.filter((col) => activeColumnVisible[col.id]).length
+
+  const ensureVisibleColumns = (visible: Record<string, boolean>, options: Array<{ id: ReportColumnId }>) => {
+    if (options.some((col) => visible[col.id])) return true
+    alert(t('reportColumnsRequired'))
+    return false
+  }
 
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -368,6 +742,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       alert(t('noDataToExport'))
       return
     }
+    if (!ensureVisibleColumns(recordColumns, RECORD_EXPORT_COLUMNS)) return
 
     const totalCount = records.length
     let totalIncome = 0
@@ -460,37 +835,16 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       19
     )
 
-    const tableData = records.map(r => [
-      r.id.slice(-8),
-      new Date(r.date).toLocaleDateString(dateLocale),
-      r.type === 'INCOME' ? t('income') : t('expense'),
-      r.category?.name || '-',
-      r.subCategory?.name || '-',
-      r.thirdCategory?.name || '-',
-      r.pool?.name || '-',
-      r.user?.roleName || '-',
-      formatCurrency(locale, r.amount),
-      String(attachmentCountOf(r)),
-      r.note || '-',
-      r.status === 'PENDING' ? t('pendingApproval') : t('approvedStored'),
-    ])
+    const rowCols = records.map((r) =>
+      buildRecordExportCols(r, recordColumns, t, locale, dateLocale)
+    )
+    const head = [rowCols[0]?.map((c) => c.head) || []]
+    const tableData = rowCols.map((cols) => cols.map((c) => c.cell))
+    const sampleCols = rowCols[0] || []
 
     autoTable(doc, {
       startY: 24,
-      head: [[
-        t('recordIdShort'),
-        t('date'),
-        t('type'),
-        t('mainCategory'),
-        t('subCategory'),
-        t('grandCategory'),
-        t('pool'),
-        t('role'),
-        t('amount'),
-        t('attachmentCount'),
-        t('note'),
-        t('status'),
-      ]],
+      head,
       body: tableData,
       styles: {
         font: pdfFont(),
@@ -508,20 +862,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: marginX, right: marginX },
-      columnStyles: {
-        0: { cellWidth: 16 },
-        1: { cellWidth: 20 },
-        2: { cellWidth: 14 },
-        3: { cellWidth: 24 },
-        4: { cellWidth: 24 },
-        5: { cellWidth: 24 },
-        6: { cellWidth: 22 },
-        7: { cellWidth: 18 },
-        8: { cellWidth: 22 },
-        9: { cellWidth: 12, halign: 'center' },
-        10: { cellWidth: 'auto' },
-        11: { cellWidth: 18 },
-      },
+      columnStyles: buildColumnStyles(sampleCols),
     })
 
     doc.save(locale === 'en' ? 'financial-report-landscape.pdf' : '財務報表_明細列表.pdf')
@@ -536,6 +877,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       alert(t('noDataToExport'))
       return
     }
+    if (!ensureVisibleColumns(activityColumns, ACTIVITY_EXPORT_COLUMNS)) return
 
     const doc = createPdfDoc('landscape')
     const pageW = doc.internal.pageSize.getWidth()
@@ -552,34 +894,19 @@ export default function ReportClient({ categories, users, pools, locale }: Props
     doc.setTextColor(90, 90, 100)
     doc.text(`${t('statisticsPeriod')}: ${timeRangeLabel()}  ·  ${activities.length} ${t('resultCount')}`, pageW / 2, 18, { align: 'center' })
 
-    const tableData = activities.map(a => [
-      a.id.slice(-8),
-      a.title || '-',
-      new Date(a.eventDate).toLocaleDateString(dateLocale),
-      String(a.reminderDays ?? '-'),
-      a.visibility === 'PRIVATE' ? t('privateActivity') : t('publicActivity'),
-      a.user?.roleName || '-',
-      String(attachmentCountOf(a)),
-      a.note || '-',
-    ])
+    const rowCols = activities.map((a) => buildActivityExportCols(a, activityColumns, t, dateLocale))
+    const head = [rowCols[0]?.map((c) => c.head) || []]
+    const tableData = rowCols.map((cols) => cols.map((c) => c.cell))
 
     autoTable(doc, {
       startY: 28,
-      head: [[
-        t('recordIdShort'),
-        t('activityTitle'),
-        t('activityDate'),
-        t('reminderDays'),
-        t('activityVisibility'),
-        t('role'),
-        t('attachmentCount'),
-        t('note'),
-      ]],
+      head,
       body: tableData,
       styles: { font: pdfFont(), fontSize: 8, cellPadding: 1.6, overflow: 'linebreak' },
       headStyles: { fillColor: [0, 122, 255], textColor: 255, font: pdfFont(), fontSize: 8, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: marginX, right: marginX },
+      columnStyles: buildColumnStyles(rowCols[0] || []),
     })
 
     doc.save(locale === 'en' ? 'activity-report.pdf' : '活動列表報表.pdf')
@@ -594,6 +921,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       alert(t('noDataToExport'))
       return
     }
+    if (!ensureVisibleColumns(contractColumns, CONTRACT_EXPORT_COLUMNS)) return
 
     const doc = createPdfDoc('landscape')
     const pageW = doc.internal.pageSize.getWidth()
@@ -610,44 +938,21 @@ export default function ReportClient({ categories, users, pools, locale }: Props
     doc.setTextColor(90, 90, 100)
     doc.text(`${t('statisticsPeriod')}: ${timeRangeLabel()}  ·  ${contracts.length} ${t('resultCount')}`, pageW / 2, 18, { align: 'center' })
 
-    const tableData = contracts.map(c => [
-      c.id.slice(-8),
-      c.title || '-',
-      c.type === 'INCOME' ? t('income') : t('expense'),
-      new Date(c.effectiveDate).toLocaleDateString(dateLocale),
-      new Date(c.expiryDate).toLocaleDateString(dateLocale),
-      c.category?.name || '-',
-      c.subCategory?.name || '-',
-      c.thirdCategory?.name || '-',
-      c.pool?.name || '-',
-      formatCurrency(locale, c.amount),
-      c.user?.roleName || '-',
-      String(attachmentCountOf(c)),
-      c.note || '-',
-    ])
+    const rowCols = contracts.map((c) =>
+      buildContractExportCols(c, contractColumns, t, locale, dateLocale)
+    )
+    const head = [rowCols[0]?.map((col) => col.head) || []]
+    const tableData = rowCols.map((cols) => cols.map((col) => col.cell))
 
     autoTable(doc, {
       startY: 28,
-      head: [[
-        t('recordIdShort'),
-        t('contractTitle'),
-        t('type'),
-        t('effectiveDate'),
-        t('expiryDate'),
-        t('mainCategory'),
-        t('subCategory'),
-        t('grandCategory'),
-        t('pool'),
-        t('amount'),
-        t('role'),
-        t('attachmentCount'),
-        t('note'),
-      ]],
+      head,
       body: tableData,
       styles: { font: pdfFont(), fontSize: 7, cellPadding: 1.4, overflow: 'linebreak' },
       headStyles: { fillColor: [0, 122, 255], textColor: 255, font: pdfFont(), fontSize: 7, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: marginX, right: marginX },
+      columnStyles: buildColumnStyles(rowCols[0] || []),
     })
 
     doc.save(locale === 'en' ? 'contract-report.pdf' : '合約列表報表.pdf')
@@ -662,6 +967,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       alert(t('noDataToExport'))
       return
     }
+    if (!ensureVisibleColumns(recordColumns, RECORD_EXPORT_COLUMNS)) return
 
     setExporting(true)
     try {
@@ -699,21 +1005,20 @@ export default function ReportClient({ categories, users, pools, locale }: Props
 
       const prepared: PreparedRow[] = []
       const csvRows: string[] = []
-      csvRows.push([
-        t('voucherNo'),
-        t('date'),
-        t('type'),
-        t('mainCategory'),
-        t('subCategory'),
-        t('grandCategory'),
-        t('pool'),
-        t('role'),
-        t('amount'),
-        t('note'),
-        t('status'),
-        t('recordId'),
-        t('voucherFile'),
-      ].map(csvEscape).join(','))
+      const csvHeaderCols = buildAccountingExportCols(
+        {
+          record: { id: '', status: 'APPROVED', category: null, subCategory: null, thirdCategory: null, pool: null, user: null, note: '', amount: 0 },
+          voucherNo: '',
+          dateStr: '',
+          typeLabel: '',
+          fileNames: [],
+        },
+        recordColumns,
+        t,
+        locale,
+        { includeVoucherFile: true, includeRecordId: true, includeStatus: true }
+      )
+      csvRows.push(csvHeaderCols.map((c) => csvEscape(c.head)).join(','))
 
       for (let i = 0; i < totalCount; i++) {
         const r = records[i]
@@ -729,14 +1034,15 @@ export default function ReportClient({ categories, users, pools, locale }: Props
         const fileNames: string[] = []
 
         if (urls.length === 0) {
-          csvRows.push([
-            voucherNo, dateStr, typeLabel,
-            r.category?.name || '-', r.subCategory?.name || '-', r.thirdCategory?.name || '-',
-            r.pool?.name || '-', r.user?.roleName || '-',
-            amountAbs.toFixed(2), r.note || '-',
-            r.status === 'PENDING' ? t('pendingApproval') : t('approvedStored'),
-            r.id, t('noVoucher'),
-          ].map(csvEscape).join(','))
+          const cols = buildAccountingExportCols(
+            { record: r, voucherNo, dateStr, typeLabel, fileNames: [] },
+            recordColumns,
+            t,
+            locale,
+            { includeVoucherFile: true, includeRecordId: true, includeStatus: true }
+          )
+          // override voucher file cell with noVoucher label already handled
+          csvRows.push(cols.map((c) => csvEscape(c.id === 'voucherFile' ? t('noVoucher') : c.cell)).join(','))
         } else {
           urls.forEach((dataUrl, k) => {
             const ext = extFromDataUrl(dataUrl)
@@ -755,14 +1061,14 @@ export default function ReportClient({ categories, users, pools, locale }: Props
               if (bytes) attFolder.file(fileName, bytes)
             }
 
-            csvRows.push([
-              voucherNo, dateStr, typeLabel,
-              r.category?.name || '-', r.subCategory?.name || '-', r.thirdCategory?.name || '-',
-              r.pool?.name || '-', r.user?.roleName || '-',
-              amountAbs.toFixed(2), r.note || '-',
-              r.status === 'PENDING' ? t('pendingApproval') : t('approvedStored'),
-              r.id, `${voucherFolderName}/${fileName}`,
-            ].map(csvEscape).join(','))
+            const cols = buildAccountingExportCols(
+              { record: r, voucherNo, dateStr, typeLabel, fileNames: [`${voucherFolderName}/${fileName}`] },
+              recordColumns,
+              t,
+              locale,
+              { includeVoucherFile: true, includeRecordId: true, includeStatus: true }
+            )
+            csvRows.push(cols.map((c) => csvEscape(c.cell)).join(','))
           })
         }
 
@@ -913,38 +1219,19 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       doc.setFontSize(8)
       doc.text(`${t('statisticsPeriod')}: ${timeRangeLabel()}  ·  ${totalCount} ${t('resultCount')}`, landW - 12, 12, { align: 'right' })
 
-      const ledgerBody = prepared.map((row) => {
-        const r = row.record
-        return [
-          row.voucherNo,
-          row.dateStr,
-          row.typeLabel,
-          r.category?.name || '-',
-          r.subCategory?.name || '-',
-          r.thirdCategory?.name || '-',
-          r.pool?.name || '-',
-          r.user?.roleName || '-',
-          formatCurrency(locale, r.amount),
-          r.note || '-',
-          row.fileNames.length > 0 ? row.fileNames.join('; ') : t('noVoucher'),
-        ]
-      })
+      const ledgerRowCols = prepared.map((row) =>
+        buildAccountingExportCols(row, recordColumns, t, locale, {
+          includeVoucherFile: true,
+          includeRecordId: false,
+          includeStatus: false,
+        })
+      )
+      const ledgerHead = [ledgerRowCols[0]?.map((c) => c.head) || []]
+      const ledgerBody = ledgerRowCols.map((cols) => cols.map((c) => c.cell))
 
       autoTable(doc, {
         startY: 24,
-        head: [[
-          t('voucherNo'),
-          t('date'),
-          t('type'),
-          t('mainCategory'),
-          t('subCategory'),
-          t('grandCategory'),
-          t('pool'),
-          t('role'),
-          t('amount'),
-          t('note'),
-          t('voucherFile'),
-        ]],
+        head: ledgerHead,
         body: ledgerBody,
         styles: {
           font: pdfFont(),
@@ -963,19 +1250,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
         },
         alternateRowStyles: { fillColor: [248, 249, 251] },
         margin: { left: 10, right: 10 },
-        columnStyles: {
-          0: { cellWidth: 14 },
-          1: { cellWidth: 20 },
-          2: { cellWidth: 14 },
-          3: { cellWidth: 24 },
-          4: { cellWidth: 24 },
-          5: { cellWidth: 24 },
-          6: { cellWidth: 22 },
-          7: { cellWidth: 18 },
-          8: { cellWidth: 22, halign: 'right' },
-          9: { cellWidth: 36 },
-          10: { cellWidth: 'auto' },
-        },
+        columnStyles: buildColumnStyles(ledgerRowCols[0] || []),
       })
 
       // Page footers
@@ -1217,6 +1492,51 @@ export default function ReportClient({ categories, users, pools, locale }: Props
           </div>
         </div>
 
+        <div className="mb-4 rounded-2xl border border-gray-100 bg-white px-4 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                {t('reportOptionalColumns')}
+              </label>
+              <p className="text-xs text-gray-500 mt-0.5">{t('reportOptionalColumnsHint')}</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAllActiveColumns(true)}
+                className="rounded-lg bg-[#F2F2F7] px-3 py-1.5 text-xs font-semibold text-gray-700"
+              >
+                {t('selectAll')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllActiveColumns(false)}
+                className="rounded-lg bg-[#F2F2F7] px-3 py-1.5 text-xs font-semibold text-gray-700"
+              >
+                {t('reportColumnsClear')}
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+            {activeColumnOptions.map((col) => (
+              <label
+                key={col.id}
+                className="inline-flex items-center gap-1.5 text-sm text-gray-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeColumnVisible[col.id])}
+                  onChange={(e) => setActiveColumnVisible(col.id, e.target.checked)}
+                />
+                {t(col.labelKey as any)}
+              </label>
+            ))}
+          </div>
+          {visibleColumnCount === 0 ? (
+            <p className="mt-2 text-xs text-[#FF3B30]">{t('reportColumnsRequired')}</p>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap gap-2.5 mb-6">
           <button
             onClick={handleSearch}
@@ -1272,15 +1592,15 @@ export default function ReportClient({ categories, users, pools, locale }: Props
               <table className="w-full text-left text-sm text-gray-700">
                 <thead className="bg-white text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-100">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">{t('date')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('type')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('categoryPath')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('role')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('pool')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('amount')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('note')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('status')}</th>
+                    {recordColumns.date ? <th className="px-4 py-3 font-semibold">{t('date')}</th> : null}
+                    {recordColumns.type ? <th className="px-4 py-3 font-semibold">{t('type')}</th> : null}
+                    {recordColumns.categories ? <th className="px-4 py-3 font-semibold">{t('categoryPath')}</th> : null}
+                    {recordColumns.role ? <th className="px-4 py-3 font-semibold">{t('role')}</th> : null}
+                    {recordColumns.pool ? <th className="px-4 py-3 font-semibold">{t('pool')}</th> : null}
+                    {recordColumns.amount ? <th className="px-4 py-3 font-semibold">{t('amount')}</th> : null}
+                    {recordColumns.attachmentCount ? <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th> : null}
+                    {recordColumns.note ? <th className="px-4 py-3 font-semibold">{t('note')}</th> : null}
+                    {recordColumns.status ? <th className="px-4 py-3 font-semibold">{t('status')}</th> : null}
                     <th className="px-4 py-3 font-semibold">{t('modify')}</th>
                     <th className="px-4 py-3 font-semibold">{t('detail')}</th>
                     <th className="px-4 py-3 font-semibold">{t('delete')}</th>
@@ -1289,32 +1609,50 @@ export default function ReportClient({ categories, users, pools, locale }: Props
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {records.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
+                      <td colSpan={15} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
                     </tr>
                   ) : (
                     records.map(record => (
                       <tr key={record.id} className="hover:bg-[#F8FAFF] transition-colors">
-                        <td className="px-4 py-3 font-medium whitespace-nowrap">{new Date(record.date).toLocaleDateString(dateLocale)}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
-                            record.type === 'INCOME' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-[#FF3B30]/10 text-[#FF3B30]'
-                          }`}>
-                            {record.type === 'INCOME' ? t('income') : t('expense')}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 max-w-[220px]">{categoryPath(record)}</td>
-                        <td className="px-4 py-3">{record.user?.roleName || '-'}</td>
-                        <td className="px-4 py-3">{record.pool?.name || '-'}</td>
-                        <td className={`px-4 py-3 font-bold whitespace-nowrap ${record.type === 'INCOME' ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>
-                          {formatCurrency(locale, record.amount)}
-                        </td>
-                        <td className="px-4 py-3 text-center">{attachmentCountOf(record)}</td>
-                        <td className="px-4 py-3 max-w-[160px] truncate text-gray-500" title={record.note || ''}>{record.note || '-'}</td>
-                        <td className="px-4 py-3">
-                          <span className={`text-xs font-semibold px-2 py-1 rounded-md ${record.status === 'PENDING' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}>
-                            {record.status === 'PENDING' ? t('pendingApproval') : t('approvedStored')}
-                          </span>
-                        </td>
+                        {recordColumns.date ? (
+                          <td className="px-4 py-3 font-medium whitespace-nowrap">{new Date(record.date).toLocaleDateString(dateLocale)}</td>
+                        ) : null}
+                        {recordColumns.type ? (
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
+                              record.type === 'INCOME' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-[#FF3B30]/10 text-[#FF3B30]'
+                            }`}>
+                              {record.type === 'INCOME' ? t('income') : t('expense')}
+                            </span>
+                          </td>
+                        ) : null}
+                        {recordColumns.categories ? (
+                          <td className="px-4 py-3 max-w-[220px]">{categoryPath(record)}</td>
+                        ) : null}
+                        {recordColumns.role ? (
+                          <td className="px-4 py-3">{record.user?.roleName || '-'}</td>
+                        ) : null}
+                        {recordColumns.pool ? (
+                          <td className="px-4 py-3">{record.pool?.name || '-'}</td>
+                        ) : null}
+                        {recordColumns.amount ? (
+                          <td className={`px-4 py-3 font-bold whitespace-nowrap ${record.type === 'INCOME' ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>
+                            {formatCurrency(locale, record.amount)}
+                          </td>
+                        ) : null}
+                        {recordColumns.attachmentCount ? (
+                          <td className="px-4 py-3 text-center">{attachmentCountOf(record)}</td>
+                        ) : null}
+                        {recordColumns.note ? (
+                          <td className="px-4 py-3 max-w-[160px] truncate text-gray-500" title={record.note || ''}>{record.note || '-'}</td>
+                        ) : null}
+                        {recordColumns.status ? (
+                          <td className="px-4 py-3">
+                            <span className={`text-xs font-semibold px-2 py-1 rounded-md ${record.status === 'PENDING' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}>
+                              {record.status === 'PENDING' ? t('pendingApproval') : t('approvedStored')}
+                            </span>
+                          </td>
+                        ) : null}
                         <td className="px-4 py-3">
                           {!record.isReviewing ? (
                             <button onClick={() => handleEditClick(record)} className="text-[#007AFF] hover:underline font-medium text-sm">{t('modify')}</button>
@@ -1382,30 +1720,38 @@ export default function ReportClient({ categories, users, pools, locale }: Props
               <table className="w-full text-left text-sm text-gray-700 min-w-[720px]">
                 <thead className="bg-[#FAFBFC] text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-100">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">{t('activityTitle')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('activityDate')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('reminderDays')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('activityVisibility')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('role')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('note')}</th>
+                    {activityColumns.activityTitle ? <th className="px-4 py-3 font-semibold">{t('activityTitle')}</th> : null}
+                    {activityColumns.activityDate ? <th className="px-4 py-3 font-semibold">{t('activityDate')}</th> : null}
+                    {activityColumns.reminderDays ? <th className="px-4 py-3 font-semibold">{t('reminderDays')}</th> : null}
+                    {activityColumns.activityVisibility ? <th className="px-4 py-3 font-semibold">{t('activityVisibility')}</th> : null}
+                    {activityColumns.role ? <th className="px-4 py-3 font-semibold">{t('role')}</th> : null}
+                    {activityColumns.attachmentCount ? <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th> : null}
+                    {activityColumns.note ? <th className="px-4 py-3 font-semibold">{t('note')}</th> : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {activities.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
+                      <td colSpan={8} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
                     </tr>
                   ) : (
                     activities.map(item => (
                       <tr key={item.id} className="hover:bg-[#F8FAFF]">
-                        <td className="px-4 py-3 font-medium">{item.title}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">{new Date(item.eventDate).toLocaleDateString(dateLocale)}</td>
-                        <td className="px-4 py-3">{item.reminderDays}</td>
-                        <td className="px-4 py-3">{item.visibility === 'PRIVATE' ? t('privateActivity') : t('publicActivity')}</td>
-                        <td className="px-4 py-3">{item.user?.roleName || '-'}</td>
-                        <td className="px-4 py-3 text-center">{attachmentCountOf(item)}</td>
-                        <td className="px-4 py-3 max-w-[220px] truncate text-gray-500">{item.note || '-'}</td>
+                        {activityColumns.activityTitle ? <td className="px-4 py-3 font-medium">{item.title}</td> : null}
+                        {activityColumns.activityDate ? (
+                          <td className="px-4 py-3 whitespace-nowrap">{new Date(item.eventDate).toLocaleDateString(dateLocale)}</td>
+                        ) : null}
+                        {activityColumns.reminderDays ? <td className="px-4 py-3">{item.reminderDays}</td> : null}
+                        {activityColumns.activityVisibility ? (
+                          <td className="px-4 py-3">{item.visibility === 'PRIVATE' ? t('privateActivity') : t('publicActivity')}</td>
+                        ) : null}
+                        {activityColumns.role ? <td className="px-4 py-3">{item.user?.roleName || '-'}</td> : null}
+                        {activityColumns.attachmentCount ? (
+                          <td className="px-4 py-3 text-center">{attachmentCountOf(item)}</td>
+                        ) : null}
+                        {activityColumns.note ? (
+                          <td className="px-4 py-3 max-w-[220px] truncate text-gray-500">{item.note || '-'}</td>
+                        ) : null}
                       </tr>
                     ))
                   )}
@@ -1421,44 +1767,58 @@ export default function ReportClient({ categories, users, pools, locale }: Props
               <table className="w-full text-left text-sm text-gray-700 min-w-[960px]">
                 <thead className="bg-[#FAFBFC] text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-100">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">{t('contractTitle')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('type')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('effectiveDate')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('expiryDate')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('categoryPath')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('pool')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('amount')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('role')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th>
-                    <th className="px-4 py-3 font-semibold">{t('note')}</th>
+                    {contractColumns.contractTitle ? <th className="px-4 py-3 font-semibold">{t('contractTitle')}</th> : null}
+                    {contractColumns.type ? <th className="px-4 py-3 font-semibold">{t('type')}</th> : null}
+                    {contractColumns.effectiveDate ? <th className="px-4 py-3 font-semibold">{t('effectiveDate')}</th> : null}
+                    {contractColumns.expiryDate ? <th className="px-4 py-3 font-semibold">{t('expiryDate')}</th> : null}
+                    {contractColumns.categories ? <th className="px-4 py-3 font-semibold">{t('categoryPath')}</th> : null}
+                    {contractColumns.pool ? <th className="px-4 py-3 font-semibold">{t('pool')}</th> : null}
+                    {contractColumns.amount ? <th className="px-4 py-3 font-semibold">{t('amount')}</th> : null}
+                    {contractColumns.role ? <th className="px-4 py-3 font-semibold">{t('role')}</th> : null}
+                    {contractColumns.attachmentCount ? <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th> : null}
+                    {contractColumns.note ? <th className="px-4 py-3 font-semibold">{t('note')}</th> : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {contracts.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
+                      <td colSpan={12} className="p-8 text-center text-gray-400 font-medium">{t('noDataTrySearch')}</td>
                     </tr>
                   ) : (
                     contracts.map(item => (
                       <tr key={item.id} className="hover:bg-[#F8FAFF]">
-                        <td className="px-4 py-3 font-medium">{item.title}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
-                            item.type === 'INCOME' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-[#FF3B30]/10 text-[#FF3B30]'
-                          }`}>
-                            {item.type === 'INCOME' ? t('income') : t('expense')}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">{new Date(item.effectiveDate).toLocaleDateString(dateLocale)}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">{new Date(item.expiryDate).toLocaleDateString(dateLocale)}</td>
-                        <td className="px-4 py-3 max-w-[200px]">{categoryPath(item)}</td>
-                        <td className="px-4 py-3">{item.pool?.name || '-'}</td>
-                        <td className={`px-4 py-3 font-bold whitespace-nowrap ${item.type === 'INCOME' ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>
-                          {formatCurrency(locale, item.amount)}
-                        </td>
-                        <td className="px-4 py-3">{item.user?.roleName || '-'}</td>
-                        <td className="px-4 py-3 text-center">{attachmentCountOf(item)}</td>
-                        <td className="px-4 py-3 max-w-[180px] truncate text-gray-500">{item.note || '-'}</td>
+                        {contractColumns.contractTitle ? <td className="px-4 py-3 font-medium">{item.title}</td> : null}
+                        {contractColumns.type ? (
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
+                              item.type === 'INCOME' ? 'bg-[#007AFF]/10 text-[#007AFF]' : 'bg-[#FF3B30]/10 text-[#FF3B30]'
+                            }`}>
+                              {item.type === 'INCOME' ? t('income') : t('expense')}
+                            </span>
+                          </td>
+                        ) : null}
+                        {contractColumns.effectiveDate ? (
+                          <td className="px-4 py-3 whitespace-nowrap">{new Date(item.effectiveDate).toLocaleDateString(dateLocale)}</td>
+                        ) : null}
+                        {contractColumns.expiryDate ? (
+                          <td className="px-4 py-3 whitespace-nowrap">{new Date(item.expiryDate).toLocaleDateString(dateLocale)}</td>
+                        ) : null}
+                        {contractColumns.categories ? (
+                          <td className="px-4 py-3 max-w-[200px]">{categoryPath(item)}</td>
+                        ) : null}
+                        {contractColumns.pool ? <td className="px-4 py-3">{item.pool?.name || '-'}</td> : null}
+                        {contractColumns.amount ? (
+                          <td className={`px-4 py-3 font-bold whitespace-nowrap ${item.type === 'INCOME' ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>
+                            {formatCurrency(locale, item.amount)}
+                          </td>
+                        ) : null}
+                        {contractColumns.role ? <td className="px-4 py-3">{item.user?.roleName || '-'}</td> : null}
+                        {contractColumns.attachmentCount ? (
+                          <td className="px-4 py-3 text-center">{attachmentCountOf(item)}</td>
+                        ) : null}
+                        {contractColumns.note ? (
+                          <td className="px-4 py-3 max-w-[180px] truncate text-gray-500">{item.note || '-'}</td>
+                        ) : null}
                       </tr>
                     ))
                   )}
