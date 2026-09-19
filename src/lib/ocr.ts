@@ -81,11 +81,8 @@ const OCR_CONTEXT_LABELS: Record<OcrContext, string> = {
   'record-edit': '公帳修改申請備註',
   'activity-edit': '事項編輯備註',
   recurring: '恆常收支備註',
-<<<<<<< HEAD
   'project-ledger': '項目帳冊單據',
-=======
   'project-framework': '項目框架文件（工作範圍／報價／合約）',
->>>>>>> origin/cursor/ai-framework-upload-ocr-3027
 }
 
 export function getOcrContextLabel(context: OcrContext) {
