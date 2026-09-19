@@ -1,8 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, type Locale } from '@/lib/i18n'
+import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
+import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import {
   commitProjectFramework,
   suggestProjectFramework,
@@ -15,15 +17,74 @@ type Props = {
   memberIds: string[]
 }
 
+function frameworkTextFromOcr(payload: OcrResolvedPayload | string): string {
+  if (typeof payload === 'string') return payload.trim()
+
+  const parts: string[] = []
+  const parsed = payload.parsed
+  if (parsed?.vendor?.trim()) parts.push(parsed.vendor.trim())
+  if (parsed?.documentDate?.trim()) parts.push(parsed.documentDate.trim())
+  if (payload.noteText.trim()) parts.push(payload.noteText.trim())
+  if (payload.contentText.trim()) parts.push(payload.contentText.trim())
+  if (parts.length === 0 && payload.attachmentMemo.trim()) {
+    parts.push(payload.attachmentMemo.trim())
+  }
+  return parts.join('\n')
+}
+
 export default function AiProjectFrameworkPanel({ locale, memberIds }: Props) {
   const t = createTranslator(locale)
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [description, setDescription] = useState('')
+  const [attachments, setAttachments] = useState<ClientAttachment[]>([])
+  const [ocrAttachmentIndex, setOcrAttachmentIndex] = useState(0)
   const [draft, setDraft] = useState<FrameworkDraft | null>(null)
   const [source, setSource] = useState<'llm' | 'mock' | null>(null)
   const [busy, setBusy] = useState(false)
   const [committing, setCommitting] = useState(false)
+
+  const handleImageChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const result = await prepareAttachments(file)
+      if (result.truncated) {
+        alert(
+          t('pdfPagesTruncated')
+            .replace('{{total}}', String(result.totalPages))
+            .replace('{{max}}', String(MAX_PDF_PAGES))
+        )
+      }
+      setAttachments(result.attachments)
+      setOcrAttachmentIndex(0)
+    } catch {
+      try {
+        const fallback = await compressImage(file, 200)
+        setAttachments([fallback])
+        setOcrAttachmentIndex(0)
+      } catch {
+        alert(t('imageCompressionFailed'))
+      }
+    }
+    event.target.value = ''
+  }
+
+  const removeAttachmentAt = (index: number) => {
+    const next = attachments.filter((_, i) => i !== index)
+    let nextOcr = ocrAttachmentIndex
+    if (index < ocrAttachmentIndex) nextOcr = ocrAttachmentIndex - 1
+    else if (index === ocrAttachmentIndex) nextOcr = 0
+    nextOcr = Math.min(nextOcr, Math.max(0, next.length - 1))
+    setAttachments(next)
+    setOcrAttachmentIndex(nextOcr)
+  }
+
+  const appendOcrToDescription = (payload: OcrResolvedPayload | string) => {
+    const text = frameworkTextFromOcr(payload)
+    if (!text) return
+    setDescription((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text))
+  }
 
   const handleSuggest = async () => {
     if (!description.trim()) {
@@ -57,6 +118,8 @@ export default function AiProjectFrameworkPanel({ locale, memberIds }: Props) {
     }
     setDraft(null)
     setDescription('')
+    setAttachments([])
+    setOcrAttachmentIndex(0)
     setOpen(false)
     router.refresh()
     router.push(`/projects/${res.id}`)
@@ -125,6 +188,71 @@ export default function AiProjectFrameworkPanel({ locale, memberIds }: Props) {
         placeholder={t('projectAiDescriptionPlaceholder')}
         className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
       />
+
+      <div className="space-y-3 rounded-2xl border border-dashed border-gray-300 bg-[#F8FAFC] p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">
+            {t('attachment')}{' '}
+            <span className="normal-case font-normal">({t('attachmentAcceptHint')})</span>
+          </label>
+          <OcrNoteButton
+            locale={locale}
+            attachments={attachments}
+            context="project-framework"
+            onResolved={appendOcrToDescription}
+            disabled={busy || committing}
+          />
+        </div>
+        <p className="text-[11px] text-gray-400">{t('projectAiUploadHint')}</p>
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={handleImageChange}
+          className="w-full text-sm text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-[#007AFF]/10 file:px-5 file:py-2.5 file:text-sm file:font-semibold file:text-[#007AFF]"
+        />
+        {attachments.length > 0 ? (
+          <div className="space-y-2">
+            {attachments.length > 1 ? (
+              <div className="text-xs font-medium text-[#007AFF]">
+                {t('pdfPagesReady').replace('{{count}}', String(attachments.length))}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((item, index) => (
+                <div
+                  key={`${item.size}-${index}-${item.pageIndex || 0}`}
+                  className={`relative rounded-lg border p-1 ${
+                    index === ocrAttachmentIndex
+                      ? 'border-[#007AFF] ring-2 ring-[#007AFF]/20'
+                      : 'border-gray-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOcrAttachmentIndex(index)}
+                    className="block"
+                  >
+                    <img src={item.url} alt="" className="h-16 w-16 rounded object-cover" />
+                    {(item.pageIndex || attachments.length > 1) && (
+                      <div className="mt-0.5 text-center text-[10px] text-gray-500">
+                        {item.pageIndex ?? index + 1}
+                      </div>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachmentAt(index)}
+                    className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-[10px] leading-none text-white"
+                    aria-label={t('delete')}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       <button
         type="button"

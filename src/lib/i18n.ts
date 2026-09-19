@@ -60,11 +60,13 @@ const messages = {
     projectTitleRequired: '請輸入項目名稱',
     projectAiOpen: 'AI 建立項目框架',
     projectAiTitle: 'AI 建立項目框架',
-    projectAiHint: '用自然語言描述工作範圍，產生可編輯的大類／下級／事項草稿；確認後才會寫入。',
+    projectAiHint:
+      '用自然語言描述工作範圍，或上傳報價／合約等文件並以圖像辨識填入描述，產生可編輯的大類／下級／事項草稿；確認後才會寫入。',
     projectAiDescriptionPlaceholder:
       '例如：香港中環街市啤酒節，搭建兩個帳篷，並委託分判商完成相關工作…',
     projectAiDescriptionRequired: '請輸入項目描述',
     projectAiDescriptionTooLong: '描述過長，請精簡後再試',
+    projectAiUploadHint: '上傳文件後按圖像辨識，理解內容會寫入上方描述欄',
     projectAiGenerate: '產生框架草稿',
     projectAiGenerating: '產生中…',
     projectAiPreview: '草稿預覽（可編輯）',
@@ -981,11 +983,13 @@ const messages = {
     projectTitleRequired: 'Project title is required',
     projectAiOpen: 'AI create project framework',
     projectAiTitle: 'AI create project framework',
-    projectAiHint: 'Describe the work in natural language to get an editable draft of sections and tasks. Nothing is saved until you confirm.',
+    projectAiHint:
+      'Describe the work in natural language, or upload a quote/contract and use OCR to fill the description. You get an editable draft of sections and tasks. Nothing is saved until you confirm.',
     projectAiDescriptionPlaceholder:
       'e.g. Central Market beer festival — build two tents and coordinate a subcontractor…',
     projectAiDescriptionRequired: 'Please enter a project description',
     projectAiDescriptionTooLong: 'Description is too long; please shorten it',
+    projectAiUploadHint: 'After uploading, run OCR — understood text is written into the description field above',
     projectAiGenerate: 'Generate framework draft',
     projectAiGenerating: 'Generating…',
     projectAiPreview: 'Draft preview (editable)',
