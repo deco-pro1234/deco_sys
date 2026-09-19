@@ -67,7 +67,7 @@ function ReminderRow({
 }) {
   const kind = kindLabel(item.kind, t)
   return (
-    <Link
+    <a
       href={item.href}
       className="flex flex-col gap-1 rounded-xl bg-[#FFF7ED] px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-[#FFEDD5] sm:flex-row sm:items-center sm:justify-between"
     >
@@ -84,7 +84,7 @@ function ReminderRow({
       <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#C2410C]">
         {formatBadgeText(item, locale)}
       </span>
-    </Link>
+    </a>
   )
 }
 

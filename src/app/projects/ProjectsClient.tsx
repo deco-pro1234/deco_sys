@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
@@ -220,7 +219,7 @@ export default function ProjectsClient({
             {visibleReminders.map((item) => {
               const kind = kindLabel(item.kind, t)
               return (
-                <Link
+                <a
                   key={item.id}
                   href={item.href}
                   className="flex flex-col gap-1 rounded-xl bg-white/90 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-white sm:flex-row sm:items-center sm:justify-between"
@@ -241,7 +240,7 @@ export default function ProjectsClient({
                   <span className="shrink-0 rounded-full bg-[#FFF7ED] px-2 py-0.5 text-xs font-medium text-[#C2410C]">
                     {formatReminderBadge(item)}
                   </span>
-                </Link>
+                </a>
               )
             })}
           </div>
@@ -375,7 +374,7 @@ export default function ProjectsClient({
           filtered.map((project) => {
             const completion = project.completion
             return (
-            <Link
+            <a
               key={project.id}
               href={`/projects/${project.id}`}
               className="block rounded-3xl border border-gray-100 bg-white p-4 shadow-sm transition-colors hover:border-[#007AFF]/30"
@@ -438,7 +437,7 @@ export default function ProjectsClient({
                 </div>
               </div>
               ) : null}
-            </Link>
+            </a>
             )
           })
         )}

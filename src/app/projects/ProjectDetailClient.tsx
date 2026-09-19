@@ -352,7 +352,7 @@ export default function ProjectDetailClient({
   const [note, setNote] = useState(project.note || '')
   const [contactUserId, setContactUserId] = useState(project.contactUserId || '')
   const [selectedMembers, setSelectedMembers] = useState<ProjectMemberPick[]>(() =>
-    project.members
+    (project.members || [])
       .filter((m) => m.userId !== project.ownerId)
       .map((m) => ({
         id: m.userId,
@@ -404,7 +404,7 @@ export default function ProjectDetailClient({
   const [pdfBusy, setPdfBusy] = useState(false)
 
   const memberIdSet = useMemo(
-    () => new Set(project.members.map((m) => m.userId)),
+    () => new Set((project.members || []).map((m) => m.userId)),
     [project.members]
   )
   const tempCandidates = useMemo(
@@ -484,7 +484,7 @@ export default function ProjectDetailClient({
 
   const tasksBySectionId = useMemo(() => {
     const map = new Map<string, ProjectTask[]>()
-    for (const task of project.tasks) {
+    for (const task of project.tasks || []) {
       const key = task.sectionId || ''
       const list = map.get(key) || []
       list.push(task)
@@ -553,7 +553,7 @@ export default function ProjectDetailClient({
 
   useEffect(() => {
     setSelectedMembers(
-      project.members
+      (project.members || [])
         .filter((m) => m.userId !== project.ownerId)
         .map((m) => ({
           id: m.userId,
