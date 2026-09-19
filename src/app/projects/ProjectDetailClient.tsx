@@ -18,6 +18,9 @@ import {
   deleteProjectLedgerEntry,
   deleteProjectSection,
   deleteProjectTask,
+  exportProjectPdf,
+  exportProjectSectionPdf,
+  exportProjectTaskPdf,
   removeUserProjectTaskAccess,
   setProjectMembers,
   setUserProjectTaskAccess,
@@ -259,6 +262,9 @@ export default function ProjectDetailClient({
 
   const [memo, setMemo] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pdfLocale, setPdfLocale] = useState<'zh' | 'en'>(locale === 'en' ? 'en' : 'zh')
+  const [pdfIncludeAttachments, setPdfIncludeAttachments] = useState(false)
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   const memberIdSet = useMemo(
     () => new Set(project.members.map((m) => m.userId)),
@@ -536,6 +542,37 @@ export default function ProjectDetailClient({
     }
   }
 
+  const downloadPdfBytes = (filename: string, bytes: Uint8Array) => {
+    const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const runPdfExport = async (
+    fn: () => Promise<
+      | { success: true; filename: string; bytes: Uint8Array }
+      | { success: false; error?: string }
+    >
+  ) => {
+    setPdfBusy(true)
+    try {
+      const res = await fn()
+      if (!res.success) {
+        alert(res.error || t('projectPdfExportFailed'))
+        return
+      }
+      downloadPdfBytes(res.filename, res.bytes)
+    } catch (e: any) {
+      alert(e?.message || t('projectPdfExportFailed'))
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   const handleMemoFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -649,6 +686,44 @@ export default function ProjectDetailClient({
 
       {activeTab === 'tasks' ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          {isFullMember ? (
+            <div className="space-y-2 rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] p-3">
+              <div className="text-xs font-semibold text-gray-600">{t('projectPdfExport')}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={pdfLocale}
+                  onChange={(e) => setPdfLocale(e.target.value as 'zh' | 'en')}
+                  className="rounded-xl bg-white px-3 py-2 text-xs outline-none shadow-sm"
+                >
+                  <option value="zh">{t('projectPdfLocaleZh')}</option>
+                  <option value="en">{t('projectPdfLocaleEn')}</option>
+                </select>
+                <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={pdfIncludeAttachments}
+                    onChange={(e) => setPdfIncludeAttachments(e.target.checked)}
+                  />
+                  {t('projectPdfIncludeAttachments')}
+                </label>
+              </div>
+              <button
+                type="button"
+                disabled={busy || pdfBusy}
+                onClick={() =>
+                  runPdfExport(() =>
+                    exportProjectPdf(project.id, {
+                      locale: pdfLocale,
+                      includeAttachments: pdfIncludeAttachments,
+                    })
+                  )
+                }
+                className="w-full rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {pdfBusy ? t('projectPdfExporting') : t('projectPdfExportProject')}
+              </button>
+            </div>
+          ) : null}
           {isFullMember ? (
             <div className="space-y-3">
               <div className="space-y-2 rounded-2xl bg-[#F8FAFC] p-3">
@@ -876,20 +951,37 @@ export default function ProjectDetailClient({
                         </button>
                         <div className="flex shrink-0 gap-1">
                           {isFullMember && sectionEntity ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => {
-                                setExpandedSectionId(sectionExpanded ? null : row.id)
-                                setSectionDescDrafts((prev) => ({
-                                  ...prev,
-                                  [row.id]: sectionEntity.description || '',
-                                }))
-                              }}
-                              className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700"
-                            >
-                              {t('projectSectionDescription')}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy || pdfBusy}
+                                onClick={() => {
+                                  setExpandedSectionId(sectionExpanded ? null : row.id)
+                                  setSectionDescDrafts((prev) => ({
+                                    ...prev,
+                                    [row.id]: sectionEntity.description || '',
+                                  }))
+                                }}
+                                className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700"
+                              >
+                                {t('projectSectionDescription')}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy || pdfBusy}
+                                onClick={() =>
+                                  runPdfExport(() =>
+                                    exportProjectSectionPdf(row.id, {
+                                      locale: pdfLocale,
+                                      includeAttachments: pdfIncludeAttachments,
+                                    })
+                                  )
+                                }
+                                className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                              >
+                                PDF
+                              </button>
+                            </>
                           ) : null}
                           {canDelete ? (
                             <button
@@ -1092,6 +1184,21 @@ export default function ProjectDetailClient({
                                 : t('projectTaskComplete')}
                             </button>
                           ) : null}
+                          <button
+                            type="button"
+                            disabled={busy || pdfBusy}
+                            onClick={() =>
+                              runPdfExport(() =>
+                                exportProjectTaskPdf(task.id, {
+                                  locale: pdfLocale,
+                                  includeAttachments: pdfIncludeAttachments,
+                                })
+                              )
+                            }
+                            className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                          >
+                            PDF
+                          </button>
                           <button
                             type="button"
                             disabled={busy}

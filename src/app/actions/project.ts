@@ -1529,3 +1529,369 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
     return []
   }
 }
+
+type ProjectPdfExportOptions = {
+  locale?: 'zh' | 'en'
+  includeAttachments?: boolean
+}
+
+function mapTaskForPdf(
+  task: {
+    title: string
+    content?: string | null
+    status: string
+    startAt?: Date | null
+    dueDate?: Date | null
+    assignees?: Array<{ user?: { roleName?: string | null } | null }>
+    assignee?: { roleName?: string | null } | null
+    attachments?: Array<{ note?: string | null; fileUrl: string; size?: number | null }>
+    memos?: Array<{
+      content: string
+      createdAt: Date
+      author?: { roleName?: string | null } | null
+    }>
+    section?: { title: string; parent?: { title: string } | null } | null
+  },
+  sectionPath?: string
+) {
+  const assignees =
+    task.assignees && task.assignees.length > 0
+      ? task.assignees.map((a) => a.user?.roleName || '').filter(Boolean)
+      : task.assignee?.roleName
+        ? [task.assignee.roleName]
+        : []
+  const path =
+    sectionPath ||
+    (task.section?.parent
+      ? `${task.section.parent.title} / ${task.section.title}`
+      : task.section?.title || undefined)
+  return {
+    title: task.title,
+    content: task.content,
+    status: task.status,
+    startAt: task.startAt,
+    dueDate: task.dueDate,
+    assignees,
+    sectionPath: path,
+    attachments: (task.attachments || []).map((a) => ({
+      note: a.note,
+      fileUrl: a.fileUrl,
+      size: a.size || 0,
+    })),
+    memos: (task.memos || []).map((m) => ({
+      author: m.author?.roleName || '—',
+      content: m.content,
+      createdAt: m.createdAt,
+    })),
+  }
+}
+
+function projectStatusLabelForPdf(status: string, locale: 'zh' | 'en') {
+  const zh: Record<string, string> = {
+    PLANNING: '規劃中',
+    ACTIVE: '進行中',
+    DONE: '已完成',
+    ARCHIVED: '已歸檔',
+  }
+  const en: Record<string, string> = {
+    PLANNING: 'Planning',
+    ACTIVE: 'Active',
+    DONE: 'Done',
+    ARCHIVED: 'Archived',
+  }
+  return (locale === 'en' ? en : zh)[status] || status
+}
+
+export async function exportProjectTaskPdf(
+  taskId: string,
+  options: ProjectPdfExportOptions = {}
+) {
+  try {
+    const locale = options.locale === 'en' ? 'en' : 'zh'
+    const includeAttachments = Boolean(options.includeAttachments)
+    const task = await prisma.projectTask.findUnique({
+      where: { id: taskId },
+      include: {
+        project: { include: { owner: { select: { roleName: true } } } },
+        section: { include: { parent: { select: { title: true } } } },
+        assignee: { select: { roleName: true } },
+        assignees: { include: { user: { select: { roleName: true } } } },
+        attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
+        memos: {
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+          include: { author: { select: { roleName: true } } },
+        },
+      },
+    })
+    const t = createTranslator(await getCurrentLocale())
+    if (!task) return { success: false as const, error: t('projectTaskNotFound') }
+    await assertProjectMember(task.projectId)
+
+    const { generateProjectPdf } = await import('@/lib/projects/pdf')
+    const bytes = generateProjectPdf({
+      projectTitle: task.project.title,
+      projectStatus: projectStatusLabelForPdf(task.project.status, locale),
+      projectNote: task.project.note,
+      ownerName: task.project.owner?.roleName,
+      mode: 'task',
+      task: mapTaskForPdf(task),
+      includeAttachments,
+      locale,
+    })
+
+    const safeTitle = task.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
+    const stamp = new Date().toISOString().slice(0, 10)
+    return {
+      success: true as const,
+      filename:
+        locale === 'en'
+          ? `Task_${safeTitle}_${stamp}.pdf`
+          : `事項_${safeTitle}_${stamp}.pdf`,
+      bytes,
+    }
+  } catch (e: any) {
+    return { success: false as const, error: e.message }
+  }
+}
+
+export async function exportProjectSectionPdf(
+  sectionId: string,
+  options: ProjectPdfExportOptions = {}
+) {
+  try {
+    const locale = options.locale === 'en' ? 'en' : 'zh'
+    const includeAttachments = Boolean(options.includeAttachments)
+    const section = await prisma.projectSection.findUnique({
+      where: { id: sectionId },
+      include: {
+        project: { include: { owner: { select: { roleName: true } } } },
+        parent: { select: { id: true, title: true } },
+        attachments: { orderBy: { createdAt: 'desc' } },
+        children: {
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+          include: {
+            attachments: { orderBy: { createdAt: 'desc' } },
+            tasks: {
+              orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+              include: {
+                assignee: { select: { roleName: true } },
+                assignees: { include: { user: { select: { roleName: true } } } },
+                attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
+                memos: {
+                  orderBy: { createdAt: 'desc' },
+                  take: 5,
+                  include: { author: { select: { roleName: true } } },
+                },
+              },
+            },
+          },
+        },
+        tasks: {
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+          include: {
+            assignee: { select: { roleName: true } },
+            assignees: { include: { user: { select: { roleName: true } } } },
+            attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
+            memos: {
+              orderBy: { createdAt: 'desc' },
+              take: 5,
+              include: { author: { select: { roleName: true } } },
+            },
+          },
+        },
+      },
+    })
+    const t = createTranslator(await getCurrentLocale())
+    if (!section) return { success: false as const, error: t('projectSectionNotFound') }
+    await assertProjectMember(section.projectId)
+
+    const pathPrefix = section.parent ? `${section.parent.title} / ${section.title}` : section.title
+    const { generateProjectPdf } = await import('@/lib/projects/pdf')
+    const bytes = generateProjectPdf({
+      projectTitle: section.project.title,
+      projectStatus: projectStatusLabelForPdf(section.project.status, locale),
+      projectNote: section.project.note,
+      ownerName: section.project.owner?.roleName,
+      mode: 'section',
+      sections: [
+        {
+          title: section.title,
+          description: section.description,
+          depth: section.parentId ? 1 : 0,
+          attachments: section.attachments.map((a) => ({
+            note: a.note,
+            fileUrl: a.fileUrl,
+            size: a.size,
+          })),
+          tasks: section.tasks.map((task) => mapTaskForPdf(task, pathPrefix)),
+          children: section.children.map((child) => ({
+            title: child.title,
+            description: child.description,
+            depth: 1,
+            attachments: child.attachments.map((a) => ({
+              note: a.note,
+              fileUrl: a.fileUrl,
+              size: a.size,
+            })),
+            tasks: child.tasks.map((task) =>
+              mapTaskForPdf(task, `${section.title} / ${child.title}`)
+            ),
+          })),
+        },
+      ],
+      includeAttachments,
+      locale,
+    })
+
+    const safeTitle = section.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
+    const stamp = new Date().toISOString().slice(0, 10)
+    return {
+      success: true as const,
+      filename:
+        locale === 'en'
+          ? `Section_${safeTitle}_${stamp}.pdf`
+          : `分組_${safeTitle}_${stamp}.pdf`,
+      bytes,
+    }
+  } catch (e: any) {
+    return { success: false as const, error: e.message }
+  }
+}
+
+export async function exportProjectPdf(
+  projectId: string,
+  options: ProjectPdfExportOptions = {}
+) {
+  try {
+    const locale = options.locale === 'en' ? 'en' : 'zh'
+    const includeAttachments = Boolean(options.includeAttachments)
+    await assertProjectMember(projectId)
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        owner: { select: { roleName: true } },
+        sections: {
+          where: { parentId: null },
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+          include: {
+            attachments: { orderBy: { createdAt: 'desc' } },
+            children: {
+              orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+              include: {
+                attachments: { orderBy: { createdAt: 'desc' } },
+                tasks: {
+                  orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+                  include: {
+                    assignee: { select: { roleName: true } },
+                    assignees: { include: { user: { select: { roleName: true } } } },
+                    attachments: {
+                      where: { memoId: null },
+                      orderBy: { createdAt: 'desc' },
+                    },
+                    memos: {
+                      orderBy: { createdAt: 'desc' },
+                      take: 5,
+                      include: { author: { select: { roleName: true } } },
+                    },
+                  },
+                },
+              },
+            },
+            tasks: {
+              orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+              include: {
+                assignee: { select: { roleName: true } },
+                assignees: { include: { user: { select: { roleName: true } } } },
+                attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
+                memos: {
+                  orderBy: { createdAt: 'desc' },
+                  take: 5,
+                  include: { author: { select: { roleName: true } } },
+                },
+              },
+            },
+          },
+        },
+        tasks: {
+          where: { sectionId: null },
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+          include: {
+            assignee: { select: { roleName: true } },
+            assignees: { include: { user: { select: { roleName: true } } } },
+            attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
+            memos: {
+              orderBy: { createdAt: 'desc' },
+              take: 5,
+              include: { author: { select: { roleName: true } } },
+            },
+          },
+        },
+      },
+    })
+    const t = createTranslator(await getCurrentLocale())
+    if (!project) return { success: false as const, error: t('projectNotFound') }
+
+    const uncategorizedLabel = locale === 'en' ? 'Uncategorized' : '未分類'
+    const sections = project.sections.map((root) => ({
+      title: root.title,
+      description: root.description,
+      depth: 0 as const,
+      attachments: root.attachments.map((a) => ({
+        note: a.note,
+        fileUrl: a.fileUrl,
+        size: a.size,
+      })),
+      tasks: root.tasks.map((task) => mapTaskForPdf(task, root.title)),
+      children: root.children.map((child) => ({
+        title: child.title,
+        description: child.description,
+        depth: 1 as const,
+        attachments: child.attachments.map((a) => ({
+          note: a.note,
+          fileUrl: a.fileUrl,
+          size: a.size,
+        })),
+        tasks: child.tasks.map((task) =>
+          mapTaskForPdf(task, `${root.title} / ${child.title}`)
+        ),
+      })),
+    }))
+
+    if (project.tasks.length > 0) {
+      sections.push({
+        title: uncategorizedLabel,
+        description: null,
+        depth: 0 as const,
+        attachments: [],
+        tasks: project.tasks.map((task) => mapTaskForPdf(task, uncategorizedLabel)),
+        children: [],
+      })
+    }
+
+    const { generateProjectPdf } = await import('@/lib/projects/pdf')
+    const bytes = generateProjectPdf({
+      projectTitle: project.title,
+      projectStatus: projectStatusLabelForPdf(project.status, locale),
+      projectNote: project.note,
+      ownerName: project.owner?.roleName,
+      mode: 'project',
+      sections,
+      includeAttachments,
+      locale,
+    })
+
+    const safeTitle = project.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
+    const stamp = new Date().toISOString().slice(0, 10)
+    return {
+      success: true as const,
+      filename:
+        locale === 'en'
+          ? `Project_${safeTitle}_${stamp}.pdf`
+          : `項目_${safeTitle}_${stamp}.pdf`,
+      bytes,
+    }
+  } catch (e: any) {
+    return { success: false as const, error: e.message }
+  }
+}
