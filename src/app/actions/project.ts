@@ -992,6 +992,7 @@ export async function createProjectTask(
     title: string
     content?: string | null
     status?: ProjectTaskStatus
+    startAt?: string | null
     dueDate?: string | null
     reminderDays?: number
     note?: string
@@ -1010,6 +1011,18 @@ export async function createProjectTask(
     const sectionId =
       input.sectionId === undefined ? null : input.sectionId ? String(input.sectionId) : null
     await assertValidTaskSection(projectId, sectionId)
+
+    const startAt = input.startAt ? new Date(input.startAt) : null
+    const dueDate = input.dueDate ? new Date(input.dueDate) : null
+    if (startAt && Number.isNaN(startAt.getTime())) {
+      return { success: false, error: t('projectTaskTimeInvalid') }
+    }
+    if (dueDate && Number.isNaN(dueDate.getTime())) {
+      return { success: false, error: t('projectTaskTimeInvalid') }
+    }
+    if (startAt && dueDate && startAt.getTime() > dueDate.getTime()) {
+      return { success: false, error: t('projectTaskTimeRangeInvalid') }
+    }
 
     const assigneeIds = Array.from(
       new Set(
@@ -1033,7 +1046,8 @@ export async function createProjectTask(
           title,
           content,
           status: input.status || 'TODO',
-          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          startAt,
+          dueDate,
           reminderDays: Number(input.reminderDays ?? 7) || 7,
           note: input.note?.trim() || null,
           assigneeId: assigneeIds[0] || null,
@@ -1064,6 +1078,7 @@ export async function updateProjectTask(
     title: string
     content?: string | null
     status: ProjectTaskStatus
+    startAt?: string | null
     dueDate?: string | null
     reminderDays?: number
     note?: string
@@ -1089,6 +1104,28 @@ export async function updateProjectTask(
       )
     }
 
+    const nextStartAt =
+      input.startAt !== undefined
+        ? input.startAt
+          ? new Date(input.startAt)
+          : null
+        : task.startAt
+    const nextDueDate =
+      input.dueDate !== undefined
+        ? input.dueDate
+          ? new Date(input.dueDate)
+          : null
+        : task.dueDate
+    if (nextStartAt && Number.isNaN(nextStartAt.getTime())) {
+      return { success: false, error: t('projectTaskTimeInvalid') }
+    }
+    if (nextDueDate && Number.isNaN(nextDueDate.getTime())) {
+      return { success: false, error: t('projectTaskTimeInvalid') }
+    }
+    if (nextStartAt && nextDueDate && nextStartAt.getTime() > nextDueDate.getTime()) {
+      return { success: false, error: t('projectTaskTimeRangeInvalid') }
+    }
+
     const assigneeIds =
       input.assigneeIds !== undefined
         ? Array.from(new Set(input.assigneeIds.filter(Boolean)))
@@ -1102,8 +1139,9 @@ export async function updateProjectTask(
         data: {
           title,
           status: input.status,
-          dueDate: input.dueDate ? new Date(input.dueDate) : null,
           reminderDays: Number(input.reminderDays ?? 7) || 7,
+          ...(input.startAt !== undefined ? { startAt: nextStartAt } : {}),
+          ...(input.dueDate !== undefined ? { dueDate: nextDueDate } : {}),
           ...(input.content !== undefined
             ? { content: input.content?.trim() || null }
             : {}),
