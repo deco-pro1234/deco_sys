@@ -762,7 +762,6 @@ export async function getProjectMemberCandidates(projectId?: string) {
   return prisma.user.findMany({
     where: {
       accountKind: ACCOUNT_KIND_STANDARD,
-      isAdmin: false,
     },
     orderBy: { roleName: 'asc' },
     select: {
@@ -774,6 +773,21 @@ export async function getProjectMemberCandidates(projectId?: string) {
       loginPhone: true,
     },
   })
+}
+
+/** Expand query for HK lookalike chars (廸/迪) and digit-only phone forms. */
+function memberSearchQueryVariants(raw: string): { texts: string[]; digits: string } {
+  const query = String(raw || '').trim()
+  const texts = new Set<string>()
+  if (query) {
+    texts.add(query)
+    const toDi = query.replace(/廸/g, '迪')
+    const toDiVariant = query.replace(/迪/g, '廸')
+    if (toDi !== query) texts.add(toDi)
+    if (toDiVariant !== query) texts.add(toDiVariant)
+  }
+  const digits = query.replace(/\D/g, '')
+  return { texts: Array.from(texts), digits }
 }
 
 /** Search standard users to add as project members (name / email / phone). */
@@ -814,29 +828,49 @@ export async function searchProjectMemberCandidates(input: {
 
     const limit = Math.min(Math.max(Number(input.limit) || 12, 1), 30)
     const excludeIds = Array.from(new Set((input.excludeIds || []).filter(Boolean)))
+    const { texts, digits } = memberSearchQueryVariants(query)
+
+    const textOr = texts.flatMap((q) => [
+      { roleName: { contains: q, mode: 'insensitive' as const } },
+      { email: { contains: q, mode: 'insensitive' as const } },
+      { loginPhone: { contains: q } },
+      {
+        profile: {
+          is: {
+            OR: [
+              { legalNameZh: { contains: q, mode: 'insensitive' as const } },
+              { legalNameEn: { contains: q, mode: 'insensitive' as const } },
+              { contactPhone: { contains: q } },
+              { contactEmail: { contains: q, mode: 'insensitive' as const } },
+            ],
+          },
+        },
+      },
+    ])
+
+    const phoneOr =
+      digits.length >= 4
+        ? [
+            { loginPhone: { contains: digits } },
+            {
+              profile: {
+                is: { contactPhone: { contains: digits } },
+              },
+            },
+            {
+              whatsappBindings: {
+                some: { phoneE164: { contains: digits } },
+              },
+            },
+          ]
+        : []
 
     const users = await prisma.user.findMany({
       where: {
         accountKind: ACCOUNT_KIND_STANDARD,
-        isAdmin: false,
+        // Admins may also join projects as members/managers.
         ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
-        OR: [
-          { roleName: { contains: query, mode: 'insensitive' } },
-          { email: { contains: query, mode: 'insensitive' } },
-          { loginPhone: { contains: query } },
-          {
-            profile: {
-              is: {
-                OR: [
-                  { legalNameZh: { contains: query, mode: 'insensitive' } },
-                  { legalNameEn: { contains: query, mode: 'insensitive' } },
-                  { contactPhone: { contains: query } },
-                  { contactEmail: { contains: query, mode: 'insensitive' } },
-                ],
-              },
-            },
-          },
-        ],
+        OR: [...textOr, ...phoneOr],
       },
       orderBy: { roleName: 'asc' },
       take: limit,
@@ -847,10 +881,30 @@ export async function searchProjectMemberCandidates(input: {
         loginPhone: true,
         isAdmin: true,
         accountKind: true,
+        profile: { select: { contactPhone: true } },
+        whatsappBindings: {
+          where: { enabled: true },
+          take: 1,
+          select: { phoneE164: true },
+        },
       },
     })
 
-    return { success: true, users }
+    return {
+      success: true,
+      users: users.map((u) => ({
+        id: u.id,
+        roleName: u.roleName,
+        email: u.email,
+        loginPhone:
+          u.loginPhone ||
+          u.profile?.contactPhone ||
+          u.whatsappBindings[0]?.phoneE164 ||
+          null,
+        isAdmin: u.isAdmin,
+        accountKind: u.accountKind,
+      })),
+    }
   } catch (e: any) {
     return { success: false, error: e.message }
   }
