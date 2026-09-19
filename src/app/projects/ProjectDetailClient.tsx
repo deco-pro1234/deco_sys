@@ -35,6 +35,7 @@ import {
 } from '@/lib/projects/completion'
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
+import { normalizePhoneE164 } from '@/lib/whatsapp/phone'
 
 type ContactProfile = {
   contactPhone?: string | null
@@ -516,6 +517,10 @@ export default function ProjectDetailClient({
     u?.profile?.contactPhone || u?.loginPhone || ''
   const contactEmailOf = (u?: ContactUser | null) =>
     u?.profile?.contactEmail || u?.email || ''
+  const whatsappHrefOf = (phone?: string | null) => {
+    const digits = normalizePhoneE164(phone || '')
+    return digits ? `https://wa.me/${digits}` : null
+  }
 
   const sectionContactGroups = useMemo(() => {
     const roots = project.sections || []
@@ -2503,28 +2508,45 @@ export default function ProjectDetailClient({
               if (!contact) {
                 return <div className="mt-3 text-sm text-gray-400">{t('projectContactNone')}</div>
               }
+              const phone = contactPhoneOf(contact)
+              const waHref = whatsappHrefOf(phone)
               return (
                 <div className="mt-3 rounded-2xl bg-[#F2F2F7] p-4 text-sm">
-                  <div className="font-semibold text-gray-900">
-                    {contact.roleName || '—'}
-                    {contact.accountKind === 'PROJECT_TEMP' ? (
-                      <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                        {t('projectTempAccessBadge')}
+                  <div className="space-y-2 text-xs text-gray-600">
+                    <div>
+                      <span className="text-gray-400">{t('projectContactName')}：</span>
+                      <span className="ml-1 font-semibold text-gray-900">
+                        {contact.roleName || '—'}
                       </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-2 space-y-1 text-xs text-gray-600">
-                    <div>
-                      {t('projectContactPhone')}: {contactPhoneOf(contact) || '—'}
+                      {contact.accountKind === 'PROJECT_TEMP' ? (
+                        <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          {t('projectTempAccessBadge')}
+                        </span>
+                      ) : null}
                     </div>
                     <div>
-                      {t('projectContactEmail')}: {contactEmailOf(contact) || '—'}
+                      <span className="text-gray-400">{t('projectContactRole')}：</span>
+                      <span className="ml-1 text-gray-800">
+                        {contact.profile?.jobTitle?.trim() || '—'}
+                      </span>
                     </div>
-                    {contact.profile?.jobTitle ? (
+                    <div className="flex flex-wrap items-center gap-2">
                       <div>
-                        {t('projectContactJobTitle')}: {contact.profile.jobTitle}
+                        <span className="text-gray-400">{t('projectContactPhone')}：</span>
+                        <span className="ml-1 text-gray-800">{phone || t('projectContactNoPhone')}</span>
                       </div>
-                    ) : null}
+                      {waHref ? (
+                        <a
+                          href={waHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#1EBE57]"
+                          title={t('projectContactWhatsAppOpen')}
+                        >
+                          {t('projectContactWhatsApp')}
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               )
