@@ -23,7 +23,7 @@ import {
   exportProjectTaskPdf,
   removeUserProjectTaskAccess,
   setProjectMembers,
-  setUserProjectTaskAccess,
+  setUserProjectSectionAccess,
   updateProject,
   updateProjectSection,
   updateProjectTask,
@@ -94,15 +94,20 @@ type ProjectSection = {
   }>
 }
 
-type TaskAccessRow = {
+type SectionAccessRow = {
   id: string
   userId: string
-  taskId: string
-  canView: boolean
+  sectionId?: string | null
+  scopeKey: string
   canAddMemo: boolean
   expiresAt?: string | Date | null
   user?: { id: string; roleName?: string | null; email?: string | null } | null
-  task?: { id: string; title: string; status: string } | null
+  section?: {
+    id: string
+    title: string
+    parentId?: string | null
+    parent?: { id: string; title: string } | null
+  } | null
 }
 
 type ProjectDetail = {
@@ -137,7 +142,7 @@ type ProjectDetail = {
     createdAt: string | Date
     author?: { roleName?: string | null } | null
   }>
-  taskAccesses?: TaskAccessRow[]
+  sectionAccesses?: SectionAccessRow[]
   accessMode?: 'full' | 'temp'
   canManageTempAccess?: boolean
   canManageProject?: boolean
@@ -154,7 +159,7 @@ type Props = {
 }
 
 type TempGrantDraft = {
-  canView: boolean
+  sectionId: string
   canAddMemo: boolean
 }
 
@@ -286,26 +291,26 @@ export default function ProjectDetailClient({
         roleName: string
         email?: string | null
         expiresAt: string
-        grants: Record<string, TempGrantDraft>
+        grants: TempGrantDraft[]
       }
     >()
-    for (const row of project.taskAccesses || []) {
+    for (const row of project.sectionAccesses || []) {
       const existing = map.get(row.userId) || {
         userId: row.userId,
         roleName: row.user?.roleName || row.userId,
         email: row.user?.email,
         expiresAt: dayInput(row.expiresAt),
-        grants: {},
+        grants: [] as TempGrantDraft[],
       }
-      existing.grants[row.taskId] = {
-        canView: row.canView,
+      existing.grants.push({
+        sectionId: row.sectionId || '',
         canAddMemo: row.canAddMemo,
-      }
+      })
       if (row.expiresAt) existing.expiresAt = dayInput(row.expiresAt)
       map.set(row.userId, existing)
     }
     return Array.from(map.values())
-  }, [project.taskAccesses])
+  }, [project.sectionAccesses])
 
   const rootSections = useMemo(() => {
     const all = project.sections || []
@@ -396,16 +401,18 @@ export default function ProjectDetailClient({
   }, [rootSections, tasksBySectionId, t])
 
   const taskDisplayRows = isTemp ? displayRows.guest : displayRows.manage
-  /** Temp grants are task-only; hide empty section headers with nothing to check. */
-  const grantDisplayRows = displayRows.guest
 
   const [tempUserId, setTempUserId] = useState('')
   const [tempExpiresAt, setTempExpiresAt] = useState('')
-  const [tempGrants, setTempGrants] = useState<Record<string, TempGrantDraft>>({})
+  const [tempGrants, setTempGrants] = useState<TempGrantDraft[]>([
+    { sectionId: '', canAddMemo: false },
+  ])
   const [newTempName, setNewTempName] = useState('')
   const [newTempPhone, setNewTempPhone] = useState('')
   const [newTempPassword, setNewTempPassword] = useState('')
-  const [createTempGrants, setCreateTempGrants] = useState<Record<string, TempGrantDraft>>({})
+  const [createTempGrants, setCreateTempGrants] = useState<TempGrantDraft[]>([
+    { sectionId: '', canAddMemo: false },
+  ])
   const [createTempExpiresAt, setCreateTempExpiresAt] = useState('')
 
   useEffect(() => {
@@ -500,15 +507,31 @@ export default function ProjectDetailClient({
     setTempUserId(userId)
     const existing = accessByUser.find((row) => row.userId === userId)
     setTempExpiresAt(existing?.expiresAt || '')
-    const next: Record<string, TempGrantDraft> = {}
-    for (const task of project.tasks) {
-      const grant = existing?.grants[task.id]
-      next[task.id] = {
-        canView: Boolean(grant?.canView),
-        canAddMemo: Boolean(grant?.canAddMemo),
-      }
+    setTempGrants(
+      existing && existing.grants.length > 0
+        ? existing.grants.map((g) => ({
+            sectionId: g.sectionId,
+            canAddMemo: Boolean(g.canAddMemo),
+          }))
+        : [{ sectionId: '', canAddMemo: false }]
+    )
+  }
+
+  const sectionGrantLabel = (sectionId: string) => {
+    if (!sectionId) return t('projectSectionUncategorized')
+    const opt = sectionOptions.find((o) => o.id === sectionId)
+    return opt?.label || sectionId
+  }
+
+  const normalizeGrantRows = (rows: TempGrantDraft[]) => {
+    const byScope = new Map<string, TempGrantDraft>()
+    for (const row of rows) {
+      byScope.set(row.sectionId || '', {
+        sectionId: row.sectionId || '',
+        canAddMemo: Boolean(row.canAddMemo),
+      })
     }
-    setTempGrants(next)
+    return Array.from(byScope.values())
   }
 
   const findSectionById = (sectionId: string): ProjectSection | null => {
@@ -1748,100 +1771,95 @@ export default function ProjectDetailClient({
             <div className="text-[11px] text-gray-400">{t('projectTempAccessExpires')}</div>
             <div>
               <div className="mb-2 text-xs font-medium text-gray-500">
-                {t('projectTempAccessTasks')}
+                {t('projectTempAccessSections')}
               </div>
-              {project.tasks.length === 0 ? (
-                <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
-              ) : (
-                <div className="space-y-2">
-                  {grantDisplayRows.map((row) => {
-                    if (row.kind === 'section') {
-                      return (
-                        <div
-                          key={`create-sec-${row.id}`}
-                          className={`text-xs font-semibold text-gray-500 ${
-                            row.depth > 0 ? 'pl-2 pt-2' : 'pt-1'
-                          }`}
-                        >
-                          {row.title}
-                        </div>
-                      )
-                    }
-                    const task = row.task
-                    const grant = createTempGrants[task.id] || {
-                      canView: false,
-                      canAddMemo: false,
-                    }
-                    return (
-                      <div
-                        key={`create-${task.id}`}
-                        className="rounded-2xl bg-white px-3 py-3 text-sm shadow-sm"
+              <div className="space-y-2">
+                {createTempGrants.map((grant, index) => (
+                  <div
+                    key={`create-grant-${index}`}
+                    className="flex flex-wrap items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm shadow-sm"
+                  >
+                    <select
+                      value={grant.sectionId}
+                      onChange={(e) => {
+                        const sectionId = e.target.value
+                        setCreateTempGrants((prev) =>
+                          prev.map((row, i) =>
+                            i === index ? { ...row, sectionId } : row
+                          )
+                        )
+                      }}
+                      className="min-w-[12rem] flex-1 rounded-xl bg-[#F2F2F7] px-3 py-2 text-sm outline-none"
+                    >
+                      {sectionOptions.map((opt) => (
+                        <option key={opt.id || '__uncategorized'} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={grant.canAddMemo}
+                        onChange={(e) => {
+                          const canAddMemo = e.target.checked
+                          setCreateTempGrants((prev) =>
+                            prev.map((row, i) =>
+                              i === index ? { ...row, canAddMemo } : row
+                            )
+                          )
+                        }}
+                      />
+                      {t('projectTempAccessCanAddMemo')}
+                    </label>
+                    {createTempGrants.length > 1 ? (
+                      <button
+                        type="button"
+                        className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                        onClick={() =>
+                          setCreateTempGrants((prev) =>
+                            prev.filter((_, i) => i !== index)
+                          )
+                        }
                       >
-                        <div className="font-medium text-gray-900">{task.title}</div>
-                        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600">
-                          <label className="inline-flex items-center gap-1.5">
-                            <input
-                              type="checkbox"
-                              checked={grant.canView}
-                              onChange={(e) => {
-                                const canView = e.target.checked
-                                setCreateTempGrants((prev) => ({
-                                  ...prev,
-                                  [task.id]: {
-                                    canView,
-                                    canAddMemo: canView
-                                      ? prev[task.id]?.canAddMemo || false
-                                      : false,
-                                  },
-                                }))
-                              }}
-                            />
-                            {t('projectTempAccessCanView')}
-                          </label>
-                          <label className="inline-flex items-center gap-1.5">
-                            <input
-                              type="checkbox"
-                              checked={grant.canAddMemo}
-                              onChange={(e) => {
-                                const canAddMemo = e.target.checked
-                                setCreateTempGrants((prev) => ({
-                                  ...prev,
-                                  [task.id]: {
-                                    canView: canAddMemo
-                                      ? true
-                                      : prev[task.id]?.canView || false,
-                                    canAddMemo,
-                                  },
-                                }))
-                              }}
-                            />
-                            {t('projectTempAccessCanAddMemo')}
-                          </label>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+                        {t('projectTempAccessRemoveScope')}
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="mt-2 text-xs font-semibold text-[#007AFF]"
+                onClick={() =>
+                  setCreateTempGrants((prev) => [
+                    ...prev,
+                    { sectionId: '', canAddMemo: false },
+                  ])
+                }
+              >
+                {t('projectTempAccessAddScope')}
+              </button>
+              <p className="mt-2 text-[11px] text-gray-400">
+                {t('projectTempAccessSectionHint')}
+              </p>
             </div>
             <button
               type="button"
               disabled={busy || !newTempName.trim() || !newTempPassword}
               onClick={async () => {
+                const grants = normalizeGrantRows(createTempGrants)
                 const ok = await run(() =>
                   createProjectTempAccount(project.id, {
                     roleName: newTempName,
                     phone: newTempPhone || null,
                     password: newTempPassword,
                     expiresAt: createTempExpiresAt || null,
-                    grants: Object.entries(createTempGrants)
-                      .filter(([, g]) => g.canView || g.canAddMemo)
-                      .map(([taskId, g]) => ({
-                        taskId,
-                        canView: g.canView || g.canAddMemo,
-                        canAddMemo: g.canAddMemo,
-                        expiresAt: createTempExpiresAt || null,
-                      })),
+                    grants: grants.map((g) => ({
+                      sectionId: g.sectionId || null,
+                      canAddMemo: g.canAddMemo,
+                      expiresAt: createTempExpiresAt || null,
+                    })),
                   })
                 )
                 if (ok) {
@@ -1849,7 +1867,7 @@ export default function ProjectDetailClient({
                   setNewTempPhone('')
                   setNewTempPassword('')
                   setCreateTempExpiresAt('')
-                  setCreateTempGrants({})
+                  setCreateTempGrants([{ sectionId: '', canAddMemo: false }])
                 }
               }}
               className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
@@ -1901,81 +1919,76 @@ export default function ProjectDetailClient({
 
               <div>
                 <div className="mb-2 text-xs font-medium text-gray-500">
-                  {t('projectTempAccessTasks')}
+                  {t('projectTempAccessSections')}
                 </div>
-                {project.tasks.length === 0 ? (
-                  <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
-                ) : (
-                  <div className="space-y-2">
-                    {grantDisplayRows.map((row) => {
-                      if (row.kind === 'section') {
-                        return (
-                          <div
-                            key={`edit-sec-${row.id}`}
-                            className={`text-xs font-semibold text-gray-500 ${
-                              row.depth > 0 ? 'pl-2 pt-2' : 'pt-1'
-                            }`}
-                          >
-                            {row.title}
-                          </div>
-                        )
-                      }
-                      const task = row.task
-                      const grant = tempGrants[task.id] || {
-                        canView: false,
-                        canAddMemo: false,
-                      }
-                      return (
-                        <div
-                          key={task.id}
-                          className="rounded-2xl bg-[#F8FAFC] px-3 py-3 text-sm"
+                <div className="space-y-2">
+                  {tempGrants.map((grant, index) => (
+                    <div
+                      key={`edit-grant-${index}`}
+                      className="flex flex-wrap items-center gap-2 rounded-2xl bg-[#F8FAFC] px-3 py-3 text-sm"
+                    >
+                      <select
+                        value={grant.sectionId}
+                        onChange={(e) => {
+                          const sectionId = e.target.value
+                          setTempGrants((prev) =>
+                            prev.map((row, i) =>
+                              i === index ? { ...row, sectionId } : row
+                            )
+                          )
+                        }}
+                        className="min-w-[12rem] flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                      >
+                        {sectionOptions.map((opt) => (
+                          <option key={opt.id || '__uncategorized'} value={opt.id}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                        <input
+                          type="checkbox"
+                          checked={grant.canAddMemo}
+                          onChange={(e) => {
+                            const canAddMemo = e.target.checked
+                            setTempGrants((prev) =>
+                              prev.map((row, i) =>
+                                i === index ? { ...row, canAddMemo } : row
+                              )
+                            )
+                          }}
+                        />
+                        {t('projectTempAccessCanAddMemo')}
+                      </label>
+                      {tempGrants.length > 1 ? (
+                        <button
+                          type="button"
+                          className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                          onClick={() =>
+                            setTempGrants((prev) => prev.filter((_, i) => i !== index))
+                          }
                         >
-                          <div className="font-medium text-gray-900">{task.title}</div>
-                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600">
-                            <label className="inline-flex items-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={grant.canView}
-                                onChange={(e) => {
-                                  const canView = e.target.checked
-                                  setTempGrants((prev) => ({
-                                    ...prev,
-                                    [task.id]: {
-                                      canView,
-                                      canAddMemo: canView
-                                        ? prev[task.id]?.canAddMemo || false
-                                        : false,
-                                    },
-                                  }))
-                                }}
-                              />
-                              {t('projectTempAccessCanView')}
-                            </label>
-                            <label className="inline-flex items-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={grant.canAddMemo}
-                                onChange={(e) => {
-                                  const canAddMemo = e.target.checked
-                                  setTempGrants((prev) => ({
-                                    ...prev,
-                                    [task.id]: {
-                                      canView: canAddMemo
-                                        ? true
-                                        : prev[task.id]?.canView || false,
-                                      canAddMemo,
-                                    },
-                                  }))
-                                }}
-                              />
-                              {t('projectTempAccessCanAddMemo')}
-                            </label>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                          {t('projectTempAccessRemoveScope')}
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="mt-2 text-xs font-semibold text-[#007AFF]"
+                  onClick={() =>
+                    setTempGrants((prev) => [
+                      ...prev,
+                      { sectionId: '', canAddMemo: false },
+                    ])
+                  }
+                >
+                  {t('projectTempAccessAddScope')}
+                </button>
+                <p className="mt-2 text-[11px] text-gray-400">
+                  {t('projectTempAccessSectionHint')}
+                </p>
               </div>
 
               <button
@@ -1983,17 +1996,14 @@ export default function ProjectDetailClient({
                 disabled={busy}
                 onClick={() =>
                   run(() =>
-                    setUserProjectTaskAccess(
+                    setUserProjectSectionAccess(
                       project.id,
                       tempUserId,
-                      Object.entries(tempGrants)
-                        .filter(([, g]) => g.canView || g.canAddMemo)
-                        .map(([taskId, g]) => ({
-                          taskId,
-                          canView: g.canView || g.canAddMemo,
-                          canAddMemo: g.canAddMemo,
-                          expiresAt: tempExpiresAt || null,
-                        }))
+                      normalizeGrantRows(tempGrants).map((g) => ({
+                        sectionId: g.sectionId || null,
+                        canAddMemo: g.canAddMemo,
+                        expiresAt: tempExpiresAt || null,
+                      }))
                     )
                   )
                 }
@@ -2023,12 +2033,10 @@ export default function ProjectDetailClient({
                           {row.roleName}
                         </div>
                         <div className="mt-1 text-xs text-gray-500">
-                          {Object.entries(row.grants)
-                            .filter(([, g]) => g.canView)
-                            .map(([taskId, g]) => {
-                              const task = project.tasks.find((item) => item.id === taskId)
-                              const label = task?.title || taskId
-                              return `${label} (${g.canAddMemo ? t('projectTempAccessCanAddMemo') : t('projectTempAccessCanView')})`
+                          {row.grants
+                            .map((g) => {
+                              const label = sectionGrantLabel(g.sectionId)
+                              return `${label} (${g.canAddMemo ? t('projectTempAccessCanAddMemo') : t('projectTempAccessReadOnly')})`
                             })
                             .join(' · ')}
                           {row.expiresAt ? ` · ${row.expiresAt}` : ''}

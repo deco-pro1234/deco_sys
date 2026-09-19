@@ -55,6 +55,8 @@ model User {
   projectLedgerEntries ProjectLedgerEntry[] @relation("UserProjectLedgerEntries")
   projectTaskAccesses  ProjectTaskAccess[]  @relation("UserProjectTaskAccess")
   projectTaskAccessesCreated ProjectTaskAccess[] @relation("UserCreatedProjectTaskAccess")
+  projectSectionAccesses ProjectSectionAccess[] @relation("UserProjectSectionAccess")
+  projectSectionAccessesCreated ProjectSectionAccess[] @relation("UserCreatedProjectSectionAccess")
 
   @@index([accountKind])
   @@index([roleName])
@@ -516,6 +518,7 @@ model Project {
   sections ProjectSection[]
   ledger   ProjectLedgerEntry[]
   taskAccesses ProjectTaskAccess[]
+  sectionAccesses ProjectSectionAccess[]
   attachments Attachment[] @relation("ProjectAttachments")
   memos       Memo[]       @relation("ProjectMemos")
 
@@ -556,6 +559,7 @@ model ProjectSection {
   children ProjectSection[] @relation("ProjectSectionTree")
   tasks    ProjectTask[]
   attachments Attachment[] @relation("ProjectSectionAttachments")
+  sectionAccesses ProjectSectionAccess[]
 
   @@index([projectId, parentId, sortOrder])
 }
@@ -598,7 +602,34 @@ model ProjectTask {
   @@index([sectionId])
 }
 
-/** Temporary (non-resident) access to specific project tasks — not a ProjectMember. */
+/** Temporary access scoped to a section (or uncategorized). View is implied; canAddMemo is optional. */
+model ProjectSectionAccess {
+  id         String    @id @default(uuid())
+  canAddMemo Boolean   @default(false)
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  projectId   String
+  /** null when granting the uncategorized bucket */
+  sectionId   String?
+  /** sectionId, or "__uncategorized__" for unique constraint */
+  scopeKey    String
+  userId      String
+  createdById String
+
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  section   ProjectSection? @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  user      User            @relation("UserProjectSectionAccess", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User            @relation("UserCreatedProjectSectionAccess", fields: [createdById], references: [id])
+
+  @@unique([projectId, userId, scopeKey])
+  @@index([userId])
+  @@index([projectId, userId])
+  @@index([expiresAt])
+}
+
+/** @deprecated Prefer ProjectSectionAccess; kept for legacy rows during/after migration. */
 model ProjectTaskAccess {
   id         String    @id @default(uuid())
   canView    Boolean   @default(true)

@@ -19,12 +19,14 @@ export type ProjectTaskStatus = 'TODO' | 'DOING' | 'DONE'
 export type ProjectLedgerType = 'INCOME' | 'EXPENSE'
 export type ProjectAccessMode = 'full' | 'temp'
 
-export type TaskAccessGrantInput = {
-  taskId: string
-  canView: boolean
+/** Section-scoped temp grant. Empty sectionId = uncategorized bucket. View is always implied. */
+export type SectionAccessGrantInput = {
+  sectionId?: string | null
   canAddMemo: boolean
   expiresAt?: string | null
 }
+
+const UNCATEGORIZED_SCOPE_KEY = '__uncategorized__'
 
 type TaskGrantRow = {
   id: string
@@ -33,6 +35,17 @@ type TaskGrantRow = {
   canView: boolean
   canAddMemo: boolean
   expiresAt: Date | null
+}
+
+function scopeKeyForSectionId(sectionId?: string | null) {
+  return sectionId ? String(sectionId) : UNCATEGORIZED_SCOPE_KEY
+}
+
+function activeSectionAccessWhere(userId: string) {
+  return {
+    userId,
+    OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+  }
 }
 
 const taskDetailInclude = {
@@ -128,14 +141,6 @@ function isGrantActive(expiresAt?: Date | null) {
   return expiresAt.getTime() > Date.now()
 }
 
-function activeTaskAccessWhere(userId: string) {
-  return {
-    userId,
-    canView: true,
-    OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-  }
-}
-
 async function assertProjectsEnabled() {
   const flags = await getPluginFlags()
   const locale = await getCurrentLocale()
@@ -160,21 +165,81 @@ async function getMembership(projectId: string, userId: string) {
 }
 
 async function listActiveTaskGrants(projectId: string, userId: string): Promise<TaskGrantRow[]> {
-  const rows = await prisma.projectTaskAccess.findMany({
+  const sectionAccesses = await prisma.projectSectionAccess.findMany({
     where: {
       projectId,
-      ...activeTaskAccessWhere(userId),
+      ...activeSectionAccessWhere(userId),
     },
     select: {
       id: true,
-      taskId: true,
-      userId: true,
-      canView: true,
+      sectionId: true,
+      scopeKey: true,
       canAddMemo: true,
       expiresAt: true,
+      userId: true,
     },
   })
-  return rows.filter((row) => isGrantActive(row.expiresAt))
+  const activeSections = sectionAccesses.filter((row) => isGrantActive(row.expiresAt))
+  if (activeSections.length === 0) return []
+
+  const [sections, tasks] = await Promise.all([
+    prisma.projectSection.findMany({
+      where: { projectId },
+      select: { id: true, parentId: true },
+    }),
+    prisma.projectTask.findMany({
+      where: { projectId },
+      select: { id: true, sectionId: true },
+    }),
+  ])
+
+  const childrenByParent = new Map<string, string[]>()
+  for (const section of sections) {
+    if (!section.parentId) continue
+    const list = childrenByParent.get(section.parentId) || []
+    list.push(section.id)
+    childrenByParent.set(section.parentId, list)
+  }
+
+  const grantByTask = new Map<
+    string,
+    { canAddMemo: boolean; expiresAt: Date | null; accessId: string }
+  >()
+
+  for (const access of activeSections) {
+    let coveredSectionIds: Set<string | null>
+    if (access.scopeKey === UNCATEGORIZED_SCOPE_KEY || !access.sectionId) {
+      coveredSectionIds = new Set([null])
+    } else {
+      coveredSectionIds = new Set([access.sectionId])
+      const meta = sections.find((s) => s.id === access.sectionId)
+      if (meta && !meta.parentId) {
+        for (const childId of childrenByParent.get(access.sectionId) || []) {
+          coveredSectionIds.add(childId)
+        }
+      }
+    }
+
+    for (const task of tasks) {
+      const taskSection = task.sectionId || null
+      if (!coveredSectionIds.has(taskSection)) continue
+      const prev = grantByTask.get(task.id)
+      grantByTask.set(task.id, {
+        accessId: access.id,
+        canAddMemo: Boolean(prev?.canAddMemo || access.canAddMemo),
+        expiresAt: access.expiresAt ?? prev?.expiresAt ?? null,
+      })
+    }
+  }
+
+  return Array.from(grantByTask.entries()).map(([taskId, grant]) => ({
+    id: grant.accessId,
+    taskId,
+    userId,
+    canView: true,
+    canAddMemo: grant.canAddMemo,
+    expiresAt: grant.expiresAt,
+  }))
 }
 
 async function assertCanViewProject(projectId: string) {
@@ -278,16 +343,9 @@ async function assertCanAddTaskMemo(taskId: string) {
     return { session, task }
   }
 
-  const grant = await prisma.projectTaskAccess.findUnique({
-    where: { taskId_userId: { taskId, userId: session.userId } },
-  })
-  if (
-    !grant ||
-    !grant.canView ||
-    !grant.canAddMemo ||
-    !isGrantActive(grant.expiresAt) ||
-    grant.projectId !== task.projectId
-  ) {
+  const grants = await listActiveTaskGrants(task.projectId, session.userId)
+  const grant = grants.find((g) => g.taskId === taskId)
+  if (!grant || !grant.canAddMemo) {
     throw new Error(t('unauthorized'))
   }
   return { session, task }
@@ -311,10 +369,9 @@ export async function getProjects() {
           { ownerId: session.userId },
           { members: { some: { userId: session.userId } } },
           {
-            taskAccesses: {
+            sectionAccesses: {
               some: {
                 userId: session.userId,
-                canView: true,
                 OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
               },
             },
@@ -336,63 +393,62 @@ export async function getProjects() {
         where: { status: { not: 'DONE' } },
         select: { id: true, dueDate: true, reminderDays: true, status: true },
       },
-      taskAccesses: session.isAdmin
+      sectionAccesses: session.isAdmin
         ? false
         : {
             where: {
               userId: session.userId,
-              canView: true,
               OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
             },
-            select: { taskId: true },
+            select: { id: true },
           },
     },
   })
 
-  return projects.map((p) => {
-    const isFull =
-      session.isAdmin ||
-      p.ownerId === session.userId ||
-      p.members.some((m) => m.userId === session.userId)
-    const accessMode: ProjectAccessMode = isFull ? 'full' : 'temp'
-    const grantedTaskIds = new Set(
-      Array.isArray(p.taskAccesses) ? p.taskAccesses.map((g) => g.taskId) : []
-    )
+  return Promise.all(
+    projects.map(async (p) => {
+      const isFull =
+        session.isAdmin ||
+        p.ownerId === session.userId ||
+        p.members.some((m) => m.userId === session.userId)
+      const accessMode: ProjectAccessMode = isFull ? 'full' : 'temp'
+      const grantedTaskIds = new Set(
+        isFull
+          ? []
+          : (await listActiveTaskGrants(p.id, session.userId)).map((g) => g.taskId)
+      )
 
-    const income = isFull
-      ? p.ledger.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0)
-      : 0
-    const expense = isFull
-      ? p.ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
-      : 0
-    const { ledger: _ledger, taskAccesses: _taskAccesses, ...rest } = p
-    const taskCount = isFull
-      ? p._count.tasks
-      : Array.isArray(p.taskAccesses)
-        ? p.taskAccesses.length
+      const income = isFull
+        ? p.ledger.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0)
         : 0
-    const openTasks = isFull
-      ? p.tasks
-      : p.tasks.filter((task) => grantedTaskIds.has(task.id))
+      const expense = isFull
+        ? p.ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
+        : 0
+      const { ledger: _ledger, sectionAccesses: _sectionAccesses, ...rest } = p
+      const taskCount = isFull ? p._count.tasks : grantedTaskIds.size
+      const openTasks = isFull
+        ? p.tasks
+        : p.tasks.filter((task) => grantedTaskIds.has(task.id))
 
-    return {
-      ...rest,
-      tasks: openTasks,
-      _count: {
-        tasks: taskCount,
-        ledger: isFull ? p._count.ledger : 0,
-      },
-      members: isFull ? p.members : [],
-      accessMode,
-      ledgerSummary: isFull
-        ? {
-            incomeHkd: income,
-            expenseHkd: expense,
-            balanceHkd: income - expense,
-          }
-        : null,
-    }
-  })
+      return {
+        ...rest,
+        tasks: openTasks,
+        _count: {
+          tasks: taskCount,
+          ledger: isFull ? p._count.ledger : 0,
+        },
+        members: isFull ? p.members : [],
+        accessMode,
+        ledgerSummary: isFull
+          ? {
+              incomeHkd: income,
+              expenseHkd: expense,
+              balanceHkd: income - expense,
+            }
+          : null,
+      }
+    })
+  )
 }
 
 export async function getProjectDetail(projectId: string) {
@@ -447,6 +503,7 @@ export async function getProjectDetail(projectId: string) {
       memos: [],
       attachments: [],
       taskAccesses: [],
+      sectionAccesses: [],
       accessMode: 'temp' as const,
       canManageTempAccess: false,
       canManageProject: false,
@@ -458,12 +515,19 @@ export async function getProjectDetail(projectId: string) {
     where: { id: projectId },
     include: {
       ...projectInclude,
-      taskAccesses: ctx.canManageTempAccess
+      sectionAccesses: ctx.canManageTempAccess
         ? {
             orderBy: { createdAt: 'asc' as const },
             include: {
-              user: { select: { id: true, roleName: true, email: true } },
-              task: { select: { id: true, title: true, status: true } },
+              user: { select: { id: true, roleName: true, email: true, loginPhone: true } },
+              section: {
+                select: {
+                  id: true,
+                  title: true,
+                  parentId: true,
+                  parent: { select: { id: true, title: true } },
+                },
+              },
               createdBy: { select: { id: true, roleName: true } },
             },
           }
@@ -474,7 +538,8 @@ export async function getProjectDetail(projectId: string) {
 
   return {
     ...project,
-    taskAccesses: Array.isArray(project.taskAccesses) ? project.taskAccesses : [],
+    taskAccesses: [],
+    sectionAccesses: Array.isArray(project.sectionAccesses) ? project.sectionAccesses : [],
     accessMode: 'full' as const,
     canManageTempAccess: ctx.canManageTempAccess,
     canManageProject: ctx.canManageProject,
@@ -532,7 +597,7 @@ export async function createProjectTempAccount(
     password: string
     phone?: string | null
     expiresAt?: string | null
-    grants: TaskAccessGrantInput[]
+    grants: SectionAccessGrantInput[]
   }
 ) {
   try {
@@ -564,35 +629,44 @@ export async function createProjectTempAccount(
       if (phoneTaken) return { success: false, error: t('projectTempAccountPhoneTaken') }
     }
 
-    const projectTasks = await prisma.projectTask.findMany({
+    const projectSections = await prisma.projectSection.findMany({
       where: { projectId },
       select: { id: true },
     })
-    const validTaskIds = new Set(projectTasks.map((task) => task.id))
+    const validSectionIds = new Set(projectSections.map((s) => s.id))
     const defaultExpires =
       input.expiresAt && String(input.expiresAt).trim()
         ? new Date(String(input.expiresAt))
         : null
     const normalizedGrants = (input.grants || [])
       .map((grant) => {
-        const taskId = String(grant.taskId || '').trim()
+        const rawSectionId = grant.sectionId ? String(grant.sectionId).trim() : ''
+        const sectionId = rawSectionId || null
         const canAddMemo = Boolean(grant.canAddMemo)
-        const canView = Boolean(grant.canView) || canAddMemo
         const expiresAt =
           grant.expiresAt && String(grant.expiresAt).trim()
             ? new Date(String(grant.expiresAt))
             : defaultExpires
         return {
-          taskId,
-          canView,
+          sectionId,
+          scopeKey: scopeKeyForSectionId(sectionId),
           canAddMemo,
           expiresAt:
             expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
         }
       })
-      .filter((grant) => grant.taskId && validTaskIds.has(grant.taskId) && grant.canView)
+      .filter(
+        (grant) =>
+          grant.scopeKey === UNCATEGORIZED_SCOPE_KEY ||
+          (grant.sectionId && validSectionIds.has(grant.sectionId))
+      )
 
-    if (normalizedGrants.length === 0) {
+    // de-dupe by scopeKey (last wins)
+    const byScope = new Map<string, (typeof normalizedGrants)[number]>()
+    for (const grant of normalizedGrants) byScope.set(grant.scopeKey, grant)
+    const uniqueGrants = Array.from(byScope.values())
+
+    if (uniqueGrants.length === 0) {
       return { success: false, error: t('projectTempAccountGrantRequired') }
     }
 
@@ -626,13 +700,13 @@ export async function createProjectTempAccount(
         select: { id: true, roleName: true, loginPhone: true },
       })
 
-      for (const grant of normalizedGrants) {
-        await tx.projectTaskAccess.create({
+      for (const grant of uniqueGrants) {
+        await tx.projectSectionAccess.create({
           data: {
             projectId,
-            taskId: grant.taskId,
+            sectionId: grant.sectionId,
+            scopeKey: grant.scopeKey,
             userId: user.id,
-            canView: grant.canView,
             canAddMemo: grant.canAddMemo,
             expiresAt: grant.expiresAt,
             createdById: session.userId,
@@ -650,10 +724,10 @@ export async function createProjectTempAccount(
   }
 }
 
-export async function setUserProjectTaskAccess(
+export async function setUserProjectSectionAccess(
   projectId: string,
   userId: string,
-  grants: TaskAccessGrantInput[]
+  grants: SectionAccessGrantInput[]
 ) {
   try {
     const { session, project } = await assertCanManageTempAccess(projectId)
@@ -681,42 +755,53 @@ export async function setUserProjectTaskAccess(
       return { success: false, error: t('projectTempAccessStaffForbidden') }
     }
 
-    const projectTasks = await prisma.projectTask.findMany({
+    const projectSections = await prisma.projectSection.findMany({
       where: { projectId },
       select: { id: true },
     })
-    const validTaskIds = new Set(projectTasks.map((task) => task.id))
+    const validSectionIds = new Set(projectSections.map((s) => s.id))
 
     const normalized = grants
       .map((grant) => {
-        const taskId = String(grant.taskId || '').trim()
+        const rawSectionId = grant.sectionId ? String(grant.sectionId).trim() : ''
+        const sectionId = rawSectionId || null
         const canAddMemo = Boolean(grant.canAddMemo)
-        const canView = Boolean(grant.canView) || canAddMemo
         const expiresAt =
           grant.expiresAt && String(grant.expiresAt).trim()
             ? new Date(String(grant.expiresAt))
             : null
         return {
-          taskId,
-          canView,
+          sectionId,
+          scopeKey: scopeKeyForSectionId(sectionId),
           canAddMemo,
           expiresAt:
             expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
         }
       })
-      .filter((grant) => grant.taskId && validTaskIds.has(grant.taskId) && grant.canView)
+      .filter(
+        (grant) =>
+          grant.scopeKey === UNCATEGORIZED_SCOPE_KEY ||
+          (grant.sectionId && validSectionIds.has(grant.sectionId))
+      )
+
+    const byScope = new Map<string, (typeof normalized)[number]>()
+    for (const grant of normalized) byScope.set(grant.scopeKey, grant)
+    const uniqueGrants = Array.from(byScope.values())
 
     await prisma.$transaction(async (tx) => {
+      await tx.projectSectionAccess.deleteMany({
+        where: { projectId, userId: targetUserId },
+      })
       await tx.projectTaskAccess.deleteMany({
         where: { projectId, userId: targetUserId },
       })
-      for (const grant of normalized) {
-        await tx.projectTaskAccess.create({
+      for (const grant of uniqueGrants) {
+        await tx.projectSectionAccess.create({
           data: {
             projectId,
-            taskId: grant.taskId,
+            sectionId: grant.sectionId,
+            scopeKey: grant.scopeKey,
             userId: targetUserId,
-            canView: grant.canView,
             canAddMemo: grant.canAddMemo,
             expiresAt: grant.expiresAt,
             createdById: session.userId,
@@ -732,12 +817,22 @@ export async function setUserProjectTaskAccess(
   }
 }
 
+/** @deprecated Use setUserProjectSectionAccess */
+export async function setUserProjectTaskAccess(
+  projectId: string,
+  userId: string,
+  grants: SectionAccessGrantInput[]
+) {
+  return setUserProjectSectionAccess(projectId, userId, grants)
+}
+
 export async function removeUserProjectTaskAccess(projectId: string, userId: string) {
   try {
     await assertCanManageTempAccess(projectId)
-    await prisma.projectTaskAccess.deleteMany({
-      where: { projectId, userId },
-    })
+    await prisma.$transaction([
+      prisma.projectSectionAccess.deleteMany({ where: { projectId, userId } }),
+      prisma.projectTaskAccess.deleteMany({ where: { projectId, userId } }),
+    ])
     revalidateProjects(projectId)
     return { success: true }
   } catch (e: any) {
@@ -1419,10 +1514,9 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
             { ownerId: session.userId },
             { members: { some: { userId: session.userId } } },
             {
-              taskAccesses: {
+              sectionAccesses: {
                 some: {
                   userId: session.userId,
-                  canView: true,
                   OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
                 },
               },
@@ -1445,16 +1539,6 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
           where: { userId: session.userId },
           select: { userId: true },
         },
-        taskAccesses: session.isAdmin
-          ? false
-          : {
-              where: {
-                userId: session.userId,
-                canView: true,
-                OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-              },
-              select: { taskId: true },
-            },
         tasks: {
           where: { status: { not: 'DONE' }, dueDate: { not: null } },
           select: {
@@ -1475,9 +1559,9 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
         project.ownerId === session.userId ||
         project.members.length > 0
       const grantedTaskIds = new Set(
-        Array.isArray(project.taskAccesses)
-          ? project.taskAccesses.map((g) => g.taskId)
-          : []
+        isFull
+          ? []
+          : (await listActiveTaskGrants(project.id, session.userId)).map((g) => g.taskId)
       )
 
       if (isFull && project.endDate) {
