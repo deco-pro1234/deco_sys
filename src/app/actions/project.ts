@@ -11,6 +11,7 @@ import {
   ACCOUNT_KIND_PROJECT_TEMP,
   ACCOUNT_KIND_STANDARD,
 } from '@/lib/access'
+import { computeProjectCompletion, taskCompletionPercent } from '@/lib/projects/completion'
 import { normalizeContactPhoneInput } from '@/lib/whatsapp/phoneSync'
 import { randomUUID } from 'crypto'
 
@@ -48,11 +49,27 @@ function activeSectionAccessWhere(userId: string) {
   }
 }
 
+const contactUserSelect = {
+  id: true,
+  roleName: true,
+  email: true,
+  loginPhone: true,
+  accountKind: true,
+  profile: {
+    select: {
+      contactPhone: true,
+      contactEmail: true,
+      jobTitle: true,
+      department: true,
+    },
+  },
+} as const
+
 const taskDetailInclude = {
   createdBy: { select: { id: true, roleName: true } },
   assignee: { select: { id: true, roleName: true } },
   assignees: {
-    include: { user: { select: { id: true, roleName: true, email: true } } },
+    include: { user: { select: contactUserSelect } },
     orderBy: { createdAt: 'asc' as const },
   },
   memos: {
@@ -79,10 +96,11 @@ const sectionAttachmentInclude = {
 }
 
 const projectInclude = {
-  owner: { select: { id: true, roleName: true, email: true } },
+  owner: { select: contactUserSelect },
+  contactUser: { select: contactUserSelect },
   members: {
     include: {
-      user: { select: { id: true, roleName: true, email: true } },
+      user: { select: contactUserSelect },
     },
     orderBy: { createdAt: 'asc' as const },
   },
@@ -123,6 +141,36 @@ const projectInclude = {
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
   },
+}
+
+/**
+ * Keep project.status aligned with task completion:
+ * - all tasks DONE → DONE (unless ARCHIVED)
+ * - any incomplete task while status was DONE → ACTIVE
+ */
+async function syncProjectCompletionFromTasks(projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      status: true,
+      tasks: { select: { status: true } },
+    },
+  })
+  if (!project) return
+  if (project.status === 'ARCHIVED') return
+
+  const stats = computeProjectCompletion(project.tasks)
+  if (stats.isComplete && project.status !== 'DONE') {
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'DONE' },
+    })
+  } else if (!stats.isComplete && project.status === 'DONE') {
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'ACTIVE' },
+    })
+  }
 }
 
 async function assertValidTaskSection(projectId: string, sectionId: string | null | undefined) {
@@ -384,13 +432,13 @@ export async function getProjects() {
     orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
     include: {
       owner: { select: { id: true, roleName: true } },
+      contactUser: { select: { id: true, roleName: true } },
       members: {
         include: { user: { select: { id: true, roleName: true } } },
       },
       _count: { select: { tasks: true, ledger: true } },
       ledger: { select: { type: true, amount: true } },
       tasks: {
-        where: { status: { not: 'DONE' } },
         select: { id: true, dueDate: true, reminderDays: true, status: true },
       },
       sectionAccesses: session.isAdmin
@@ -424,15 +472,18 @@ export async function getProjects() {
       const expense = isFull
         ? p.ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
         : 0
-      const { ledger: _ledger, sectionAccesses: _sectionAccesses, ...rest } = p
-      const taskCount = isFull ? p._count.tasks : grantedTaskIds.size
-      const openTasks = isFull
-        ? p.tasks
-        : p.tasks.filter((task) => grantedTaskIds.has(task.id))
+      const { ledger: _ledger, sectionAccesses: _sectionAccesses, tasks: allTasks, ...rest } = p
+      const scopedTasks = isFull
+        ? allTasks
+        : allTasks.filter((task) => grantedTaskIds.has(task.id))
+      const completion = computeProjectCompletion(scopedTasks)
+      const openTasks = scopedTasks.filter((task) => task.status !== 'DONE')
+      const taskCount = scopedTasks.length
 
       return {
         ...rest,
         tasks: openTasks,
+        completion,
         _count: {
           tasks: taskCount,
           ledger: isFull ? p._count.ledger : 0,
@@ -459,7 +510,8 @@ export async function getProjectDetail(projectId: string) {
     const project = await prisma.project.findUnique({
       where: { id: projectId },
       include: {
-        owner: { select: { id: true, roleName: true, email: true } },
+        owner: { select: contactUserSelect },
+        contactUser: { select: contactUserSelect },
         sections: {
           where: { parentId: null },
           orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
@@ -508,6 +560,7 @@ export async function getProjectDetail(projectId: string) {
       canManageTempAccess: false,
       canManageProject: false,
       myTaskAccess,
+      completion: computeProjectCompletion(project.tasks),
     }
   }
 
@@ -519,7 +572,7 @@ export async function getProjectDetail(projectId: string) {
         ? {
             orderBy: { createdAt: 'asc' as const },
             include: {
-              user: { select: { id: true, roleName: true, email: true, loginPhone: true } },
+              user: { select: contactUserSelect },
               section: {
                 select: {
                   id: true,
@@ -531,7 +584,22 @@ export async function getProjectDetail(projectId: string) {
               createdBy: { select: { id: true, roleName: true } },
             },
           }
-        : false,
+        : {
+            where: {
+              OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            },
+            include: {
+              user: { select: contactUserSelect },
+              section: {
+                select: {
+                  id: true,
+                  title: true,
+                  parentId: true,
+                  parent: { select: { id: true, title: true } },
+                },
+              },
+            },
+          },
     },
   })
   if (!project) return null
@@ -544,6 +612,7 @@ export async function getProjectDetail(projectId: string) {
     canManageTempAccess: ctx.canManageTempAccess,
     canManageProject: ctx.canManageProject,
     myTaskAccess: null as Record<string, { canView: boolean; canAddMemo: boolean }> | null,
+    completion: computeProjectCompletion(project.tasks),
   }
 }
 
@@ -848,6 +917,7 @@ export async function createProject(input: {
   reminderDays?: number
   note?: string
   memberIds?: string[]
+  contactUserId?: string | null
 }) {
   try {
     const session = await requireSession()
@@ -862,6 +932,10 @@ export async function createProject(input: {
     const memberIds = Array.from(
       new Set([session.userId, ...(input.memberIds || []).filter(Boolean)])
     )
+    const contactUserId = input.contactUserId?.trim() || null
+    if (contactUserId && !memberIds.includes(contactUserId)) {
+      memberIds.push(contactUserId)
+    }
 
     const project = await prisma.$transaction(async (tx) => {
       const created = await tx.project.create({
@@ -873,6 +947,7 @@ export async function createProject(input: {
           reminderDays: Number(input.reminderDays ?? 15) || 15,
           note: input.note?.trim() || null,
           ownerId: session.userId,
+          contactUserId,
         },
       })
 
@@ -904,6 +979,7 @@ export async function updateProject(
     endDate?: string | null
     reminderDays?: number
     note?: string
+    contactUserId?: string | null
   }
 ) {
   try {
@@ -918,12 +994,31 @@ export async function updateProject(
       data: {
         title,
         status: input.status,
-        startDate: input.startDate ? new Date(input.startDate) : null,
-        endDate: input.endDate ? new Date(input.endDate) : null,
+        startDate:
+          input.startDate !== undefined
+            ? input.startDate
+              ? new Date(input.startDate)
+              : null
+            : undefined,
+        endDate:
+          input.endDate !== undefined
+            ? input.endDate
+              ? new Date(input.endDate)
+              : null
+            : undefined,
         reminderDays: Number(input.reminderDays ?? 15) || 15,
         note: input.note?.trim() || null,
+        ...(input.contactUserId !== undefined
+          ? { contactUserId: input.contactUserId?.trim() || null }
+          : {}),
       },
     })
+
+    // If manager manually set ARCHIVED/PLANNING, leave it; otherwise sync from tasks
+    if (input.status !== 'ARCHIVED') {
+      await syncProjectCompletionFromTasks(projectId)
+    }
+
     revalidateProjects(projectId)
     return { success: true }
   } catch (e: any) {
@@ -1160,6 +1255,7 @@ export async function createProjectTask(
         })
       }
     })
+    await syncProjectCompletionFromTasks(projectId)
     revalidateProjects(projectId)
     return { success: true }
   } catch (e: any) {
@@ -1272,6 +1368,7 @@ export async function updateProjectTask(
         }
       }
     })
+    await syncProjectCompletionFromTasks(task.projectId)
     revalidateProjects(task.projectId)
     return { success: true }
   } catch (e: any) {
@@ -1287,6 +1384,7 @@ export async function deleteProjectTask(taskId: string) {
     if (!task) return { success: false, error: t('projectTaskNotFound') }
     await assertProjectMember(task.projectId)
     await prisma.projectTask.delete({ where: { id: taskId } })
+    await syncProjectCompletionFromTasks(task.projectId)
     revalidateProjects(task.projectId)
     return { success: true }
   } catch (e: any) {
@@ -1617,6 +1715,8 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
 type ProjectPdfExportOptions = {
   locale?: 'zh' | 'en'
   includeAttachments?: boolean
+  /** Progress report: include completion summary and per-task percents. */
+  progressReport?: boolean
 }
 
 function mapTaskForPdf(
@@ -1626,8 +1726,16 @@ function mapTaskForPdf(
     status: string
     startAt?: Date | null
     dueDate?: Date | null
-    assignees?: Array<{ user?: { roleName?: string | null } | null }>
-    assignee?: { roleName?: string | null } | null
+    assignees?: Array<{
+      user?: {
+        roleName?: string | null
+        accountKind?: string | null
+        loginPhone?: string | null
+        email?: string | null
+        profile?: { contactPhone?: string | null; contactEmail?: string | null } | null
+      } | null
+    }>
+    assignee?: { roleName?: string | null; accountKind?: string | null } | null
     attachments?: Array<{ note?: string | null; fileUrl: string; size?: number | null }>
     memos?: Array<{
       content: string
@@ -1636,14 +1744,46 @@ function mapTaskForPdf(
     }>
     section?: { title: string; parent?: { title: string } | null } | null
   },
-  sectionPath?: string
+  sectionPath?: string,
+  locale: 'zh' | 'en' = 'zh'
 ) {
-  const assignees =
+  const tempTag = locale === 'en' ? 'temp' : '臨時'
+  const assigneeRows =
     task.assignees && task.assignees.length > 0
-      ? task.assignees.map((a) => a.user?.roleName || '').filter(Boolean)
+      ? task.assignees
+          .map((a) => {
+            const u = a.user
+            if (!u?.roleName) return null
+            const isTemp = u.accountKind === ACCOUNT_KIND_PROJECT_TEMP
+            const phone = u.profile?.contactPhone || u.loginPhone || ''
+            const email = u.profile?.contactEmail || u.email || ''
+            const bits = [isTemp ? `${u.roleName}（${tempTag}）` : u.roleName]
+            if (phone) bits.push(phone)
+            if (email) bits.push(email)
+            return {
+              name: u.roleName,
+              isTemp,
+              phone: phone || null,
+              email: email || null,
+              label: bits.filter(Boolean).join(' · '),
+            }
+          })
+          .filter(Boolean)
       : task.assignee?.roleName
-        ? [task.assignee.roleName]
+        ? [
+            {
+              name: task.assignee.roleName,
+              isTemp: task.assignee.accountKind === ACCOUNT_KIND_PROJECT_TEMP,
+              phone: null as string | null,
+              email: null as string | null,
+              label:
+                task.assignee.accountKind === ACCOUNT_KIND_PROJECT_TEMP
+                  ? `${task.assignee.roleName}（${tempTag}）`
+                  : task.assignee.roleName,
+            },
+          ]
         : []
+
   const path =
     sectionPath ||
     (task.section?.parent
@@ -1653,9 +1793,16 @@ function mapTaskForPdf(
     title: task.title,
     content: task.content,
     status: task.status,
+    completionPercent: taskCompletionPercent(task.status),
     startAt: task.startAt,
     dueDate: task.dueDate,
-    assignees,
+    assignees: assigneeRows.map((a) => a!.label),
+    assigneeDetails: assigneeRows.map((a) => ({
+      name: a!.name,
+      isTemp: a!.isTemp,
+      phone: a!.phone,
+      email: a!.email,
+    })),
     sectionPath: path,
     attachments: (task.attachments || []).map((a) => ({
       note: a.note,
@@ -1851,10 +1998,14 @@ export async function exportProjectPdf(
     const locale = options.locale === 'en' ? 'en' : 'zh'
     const includeAttachments = Boolean(options.includeAttachments)
     await assertProjectMember(projectId)
+    const assigneeInclude = {
+      include: { user: { select: contactUserSelect } },
+    }
     const project = await prisma.project.findUnique({
       where: { id: projectId },
       include: {
-        owner: { select: { roleName: true } },
+        owner: { select: contactUserSelect },
+        contactUser: { select: contactUserSelect },
         sections: {
           where: { parentId: null },
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -1867,8 +2018,8 @@ export async function exportProjectPdf(
                 tasks: {
                   orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
                   include: {
-                    assignee: { select: { roleName: true } },
-                    assignees: { include: { user: { select: { roleName: true } } } },
+                    assignee: { select: contactUserSelect },
+                    assignees: assigneeInclude,
                     attachments: {
                       where: { memoId: null },
                       orderBy: { createdAt: 'desc' },
@@ -1885,8 +2036,8 @@ export async function exportProjectPdf(
             tasks: {
               orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
               include: {
-                assignee: { select: { roleName: true } },
-                assignees: { include: { user: { select: { roleName: true } } } },
+                assignee: { select: contactUserSelect },
+                assignees: assigneeInclude,
                 attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
                 memos: {
                   orderBy: { createdAt: 'desc' },
@@ -1901,8 +2052,8 @@ export async function exportProjectPdf(
           where: { sectionId: null },
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
           include: {
-            assignee: { select: { roleName: true } },
-            assignees: { include: { user: { select: { roleName: true } } } },
+            assignee: { select: contactUserSelect },
+            assignees: assigneeInclude,
             attachments: { where: { memoId: null }, orderBy: { createdAt: 'desc' } },
             memos: {
               orderBy: { createdAt: 'desc' },
@@ -1911,12 +2062,53 @@ export async function exportProjectPdf(
             },
           },
         },
+        sectionAccesses: {
+          where: {
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          },
+          include: {
+            user: { select: contactUserSelect },
+            section: { select: { id: true, title: true, parentId: true } },
+          },
+        },
       },
     })
     const t = createTranslator(await getCurrentLocale())
     if (!project) return { success: false as const, error: t('projectNotFound') }
 
     const uncategorizedLabel = locale === 'en' ? 'Uncategorized' : '未分類'
+    const allTasksFlat = [
+      ...project.sections.flatMap((root) => [
+        ...root.tasks,
+        ...root.children.flatMap((c) => c.tasks),
+      ]),
+      ...project.tasks,
+    ]
+    const completion = computeProjectCompletion(allTasksFlat)
+
+    const formatContact = (u?: {
+      roleName?: string | null
+      email?: string | null
+      loginPhone?: string | null
+      accountKind?: string | null
+      profile?: { contactPhone?: string | null; contactEmail?: string | null } | null
+    } | null) => {
+      if (!u?.roleName) return null
+      const phone = u.profile?.contactPhone || u.loginPhone || ''
+      const email = u.profile?.contactEmail || u.email || ''
+      const temp =
+        u.accountKind === ACCOUNT_KIND_PROJECT_TEMP
+          ? locale === 'en'
+            ? ' (temp)'
+            : '（臨時）'
+          : ''
+      return {
+        name: `${u.roleName}${temp}`,
+        phone: phone || null,
+        email: email || null,
+      }
+    }
+
     const sections = project.sections.map((root) => ({
       title: root.title,
       description: root.description,
@@ -1926,7 +2118,7 @@ export async function exportProjectPdf(
         fileUrl: a.fileUrl,
         size: a.size,
       })),
-      tasks: root.tasks.map((task) => mapTaskForPdf(task, root.title)),
+      tasks: root.tasks.map((task) => mapTaskForPdf(task, root.title, locale)),
       children: root.children.map((child) => ({
         title: child.title,
         description: child.description,
@@ -1937,7 +2129,7 @@ export async function exportProjectPdf(
           size: a.size,
         })),
         tasks: child.tasks.map((task) =>
-          mapTaskForPdf(task, `${root.title} / ${child.title}`)
+          mapTaskForPdf(task, `${root.title} / ${child.title}`, locale)
         ),
       })),
     }))
@@ -1948,7 +2140,7 @@ export async function exportProjectPdf(
         description: null,
         depth: 0 as const,
         attachments: [],
-        tasks: project.tasks.map((task) => mapTaskForPdf(task, uncategorizedLabel)),
+        tasks: project.tasks.map((task) => mapTaskForPdf(task, uncategorizedLabel, locale)),
         children: [],
       })
     }
@@ -1959,7 +2151,15 @@ export async function exportProjectPdf(
       projectStatus: projectStatusLabelForPdf(project.status, locale),
       projectNote: project.note,
       ownerName: project.owner?.roleName,
-      mode: 'project',
+      contactName: formatContact(project.contactUser)?.name || formatContact(project.owner)?.name,
+      contactPhone:
+        formatContact(project.contactUser)?.phone || formatContact(project.owner)?.phone,
+      contactEmail:
+        formatContact(project.contactUser)?.email || formatContact(project.owner)?.email,
+      startDate: project.startDate,
+      endDate: project.endDate,
+      completion,
+      mode: options.progressReport ? 'progress' : 'project',
       sections,
       includeAttachments,
       locale,
@@ -1967,12 +2167,16 @@ export async function exportProjectPdf(
 
     const safeTitle = project.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
     const stamp = new Date().toISOString().slice(0, 10)
+    const progressPrefix = options.progressReport
+      ? locale === 'en'
+        ? 'Progress'
+        : '進度'
+      : locale === 'en'
+        ? 'Project'
+        : '項目'
     return {
       success: true as const,
-      filename:
-        locale === 'en'
-          ? `Project_${safeTitle}_${stamp}.pdf`
-          : `項目_${safeTitle}_${stamp}.pdf`,
+      filename: `${progressPrefix}_${safeTitle}_${stamp}.pdf`,
       bytes,
     }
   } catch (e: any) {

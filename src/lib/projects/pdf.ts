@@ -19,9 +19,17 @@ export type ProjectPdfTask = {
   title: string
   content?: string | null
   status: string
+  /** 0–100 display completion for this task */
+  completionPercent?: number
   startAt?: Date | string | null
   dueDate?: Date | string | null
   assignees?: string[]
+  assigneeDetails?: Array<{
+    name: string
+    isTemp?: boolean
+    phone?: string | null
+    email?: string | null
+  }>
   sectionPath?: string
   attachments?: ProjectPdfAttachment[]
   memos?: ProjectPdfMemo[]
@@ -41,7 +49,20 @@ export type GenerateProjectPdfInput = {
   projectStatus: string
   projectNote?: string | null
   ownerName?: string | null
-  mode: 'task' | 'section' | 'project'
+  contactName?: string | null
+  contactPhone?: string | null
+  contactEmail?: string | null
+  startDate?: Date | string | null
+  endDate?: Date | string | null
+  completion?: {
+    total: number
+    done: number
+    doing: number
+    todo: number
+    percent: number
+    isComplete: boolean
+  } | null
+  mode: 'task' | 'section' | 'project' | 'progress'
   task?: ProjectPdfTask | null
   sections?: ProjectPdfSectionNode[]
   includeAttachments: boolean
@@ -52,9 +73,18 @@ type Labels = {
   reportTitleTask: string
   reportTitleSection: string
   reportTitleProject: string
+  reportTitleProgress: string
   project: string
   status: string
   owner: string
+  contact: string
+  phone: string
+  email: string
+  startDate: string
+  endDate: string
+  completion: string
+  completionDetail: string
+  taskCompletion: string
   generatedAt: string
   note: string
   section: string
@@ -72,6 +102,7 @@ type Labels = {
   statusTodo: string
   statusDoing: string
   statusDone: string
+  tempMember: string
 }
 
 function labelsFor(locale: ProjectPdfLocale): Labels {
@@ -80,9 +111,18 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
       reportTitleTask: 'Task report',
       reportTitleSection: 'Section report',
       reportTitleProject: 'Project report',
+      reportTitleProgress: 'Project progress report',
       project: 'Project',
       status: 'Status',
       owner: 'Owner',
+      contact: 'Project contact',
+      phone: 'Phone',
+      email: 'Email',
+      startDate: 'Start date',
+      endDate: 'End date',
+      completion: 'Completion',
+      completionDetail: 'Done / Doing / To do',
+      taskCompletion: 'Task completion',
       generatedAt: 'Generated',
       note: 'Note',
       section: 'Section',
@@ -100,15 +140,25 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
       statusTodo: 'To do',
       statusDoing: 'Doing',
       statusDone: 'Done',
+      tempMember: 'temp',
     }
   }
   return {
     reportTitleTask: '事項報告',
     reportTitleSection: '分組報告',
     reportTitleProject: '項目報告',
+    reportTitleProgress: '項目進度報表',
     project: '項目',
     status: '狀態',
     owner: '負責人',
+    contact: '專案聯絡人',
+    phone: '電話',
+    email: '電郵',
+    startDate: '開始日期',
+    endDate: '結束日期',
+    completion: '完成率',
+    completionDetail: '已完成 / 進行中 / 待辦',
+    taskCompletion: '事項完成度',
     generatedAt: '產生時間',
     note: '備註',
     section: '分組',
@@ -126,6 +176,7 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
     statusTodo: '待辦',
     statusDoing: '進行中',
     statusDone: '已完成',
+    tempMember: '臨時',
   }
 }
 
@@ -288,6 +339,15 @@ function drawTaskBlock(
   const meta: string[] = [
     `${L.status}: ${statusLabel(task.status, L)}`,
   ]
+  const pct =
+    typeof task.completionPercent === 'number'
+      ? task.completionPercent
+      : task.status === 'DONE'
+        ? 100
+        : task.status === 'DOING'
+          ? 50
+          : 0
+  meta.push(`${L.taskCompletion}: ${pct}%`)
   if (task.sectionPath) meta.push(`${L.section}: ${task.sectionPath}`)
   const schedule = scheduleLabel(task, locale)
   if (schedule) meta.push(`${L.schedule}: ${schedule}`)
@@ -457,7 +517,9 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
       ? L.reportTitleTask
       : input.mode === 'section'
         ? L.reportTitleSection
-        : L.reportTitleProject
+        : input.mode === 'progress'
+          ? L.reportTitleProgress
+          : L.reportTitleProject
 
   let y = margin
   doc.setFillColor(236, 242, 255)
@@ -473,10 +535,28 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
   y = 68
   doc.setTextColor(30, 30, 30)
 
+  const formatDay = (value?: Date | string | null) => {
+    if (!value) return ''
+    const d = typeof value === 'string' ? new Date(value) : value
+    if (Number.isNaN(d.getTime())) return ''
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+  }
+
   const headerLines = [
     `${L.project}: ${input.projectTitle}`,
     `${L.status}: ${input.projectStatus}`,
     input.ownerName ? `${L.owner}: ${input.ownerName}` : '',
+    input.contactName ? `${L.contact}: ${input.contactName}` : '',
+    input.contactPhone ? `${L.phone}: ${input.contactPhone}` : '',
+    input.contactEmail ? `${L.email}: ${input.contactEmail}` : '',
+    input.startDate ? `${L.startDate}: ${formatDay(input.startDate)}` : '',
+    input.endDate ? `${L.endDate}: ${formatDay(input.endDate)}` : '',
+    input.completion
+      ? `${L.completion}: ${input.completion.percent}% (${input.completion.done}/${input.completion.total})`
+      : '',
+    input.completion
+      ? `${L.completionDetail}: ${input.completion.done} / ${input.completion.doing} / ${input.completion.todo}`
+      : '',
     `${L.generatedAt}: ${formatDateTime(new Date(), locale)}`,
   ].filter(Boolean)
   for (const line of headerLines) {
