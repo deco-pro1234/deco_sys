@@ -6,6 +6,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import ContractDetailModal from '../ContractDetailModal'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
+import { PageHelpHeading } from '@/components/HelpTip'
 
 type ContractItem = {
   id: string
@@ -253,8 +254,15 @@ export default function ContractsClient({ locale, pools, currentUserId, initialC
       )}
 
       <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-5">
-        <h2 className="text-xl font-semibold text-gray-900">{t('contractsPage')}</h2>
-        <p className="mt-2 text-sm text-gray-500">{t('contractsPageHint')}</p>
+        <PageHelpHeading
+          locale={locale}
+          title={t('contractsPage')}
+          titleKey="helpContractsTitle"
+          bodyKey="helpContractsBody"
+          subtitle={t('contractsPageHint')}
+          headingClassName="text-xl font-semibold text-gray-900"
+          as="h2"
+        />
       </section>
 
       <section className={`rounded-2xl border p-4 shadow-sm sm:rounded-3xl sm:p-6 ${type === 'INCOME' ? 'border-[#007AFF]/20 bg-[#F2F8FF]' : 'border-[#FF3B30]/20 bg-[#FFF2F2]'}`}>

@@ -1838,6 +1838,11 @@ type ProjectPdfExportOptions = {
   includeAttachments?: boolean
   /** Progress report: include completion summary and per-task percents. */
   progressReport?: boolean
+  /**
+   * Deterministic document templates.
+   * `progress` / legacy `progressReport` both map to progress mode.
+   */
+  documentType?: 'project' | 'progress' | 'schedule' | 'sectionList' | 'finance'
 }
 
 function mapTaskForPdf(
@@ -2060,12 +2065,17 @@ export async function exportProjectSectionPdf(
 
     const pathPrefix = section.parent ? `${section.parent.title} / ${section.title}` : section.title
     const { generateProjectPdf } = await import('@/lib/projects/pdf')
+    const documentType =
+      options.documentType === 'schedule' || options.documentType === 'sectionList'
+        ? options.documentType
+        : 'section'
+    const mode = documentType === 'schedule' ? 'schedule' : documentType === 'sectionList' ? 'sectionList' : 'section'
     const bytes = generateProjectPdf({
       projectTitle: section.project.title,
       projectStatus: projectStatusLabelForPdf(section.project.status, locale),
       projectNote: section.project.note,
       ownerName: section.project.owner?.roleName,
-      mode: 'section',
+      mode,
       sections: [
         {
           title: section.title,
@@ -2092,18 +2102,27 @@ export async function exportProjectSectionPdf(
           })),
         },
       ],
-      includeAttachments,
+      includeAttachments: mode === 'section' ? includeAttachments : false,
       locale,
     })
 
     const safeTitle = section.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
     const stamp = new Date().toISOString().slice(0, 10)
+    const prefix =
+      mode === 'schedule'
+        ? locale === 'en'
+          ? 'Schedule'
+          : '工作排程'
+        : mode === 'sectionList'
+          ? locale === 'en'
+            ? 'SectionList'
+            : '分組事項列表'
+          : locale === 'en'
+            ? 'Section'
+            : '分組'
     return {
       success: true as const,
-      filename:
-        locale === 'en'
-          ? `Section_${safeTitle}_${stamp}.pdf`
-          : `分組_${safeTitle}_${stamp}.pdf`,
+      filename: `${prefix}_${safeTitle}_${stamp}.pdf`,
       bytes,
     }
   } catch (e: any) {
@@ -2182,6 +2201,10 @@ export async function exportProjectPdf(
               include: { author: { select: { roleName: true } } },
             },
           },
+        },
+        ledger: {
+          orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+          include: { createdBy: { select: { roleName: true } } },
         },
         sectionAccesses: {
           where: {
@@ -2267,6 +2290,19 @@ export async function exportProjectPdf(
     }
 
     const { generateProjectPdf } = await import('@/lib/projects/pdf')
+    const documentType =
+      options.documentType ||
+      (options.progressReport ? 'progress' : 'project')
+    const mode =
+      documentType === 'progress'
+        ? 'progress'
+        : documentType === 'schedule'
+          ? 'schedule'
+          : documentType === 'sectionList'
+            ? 'sectionList'
+            : documentType === 'finance'
+              ? 'finance'
+              : 'project'
     const bytes = generateProjectPdf({
       projectTitle: project.title,
       projectStatus: projectStatusLabelForPdf(project.status, locale),
@@ -2280,24 +2316,45 @@ export async function exportProjectPdf(
       startDate: project.startDate,
       endDate: project.endDate,
       completion,
-      mode: options.progressReport ? 'progress' : 'project',
+      mode,
       sections,
-      includeAttachments,
+      ledger:
+        mode === 'finance'
+          ? project.ledger.map((e) => ({
+              type: e.type,
+              amount: e.amount,
+              date: e.date,
+              note: e.note,
+              createdBy: e.createdBy?.roleName || null,
+            }))
+          : undefined,
+      includeAttachments: mode === 'project' || mode === 'progress' ? includeAttachments : false,
       locale,
     })
 
     const safeTitle = project.title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40)
     const stamp = new Date().toISOString().slice(0, 10)
-    const progressPrefix = options.progressReport
-      ? locale === 'en'
-        ? 'Progress'
-        : '進度'
-      : locale === 'en'
-        ? 'Project'
-        : '項目'
+    const prefixMapZh: Record<string, string> = {
+      progress: '進度',
+      schedule: '工作排程',
+      sectionList: '分組事項列表',
+      finance: '項目財務',
+      project: '項目',
+    }
+    const prefixMapEn: Record<string, string> = {
+      progress: 'Progress',
+      schedule: 'Schedule',
+      sectionList: 'SectionList',
+      finance: 'Finance',
+      project: 'Project',
+    }
+    const prefix =
+      locale === 'en'
+        ? prefixMapEn[documentType] || 'Project'
+        : prefixMapZh[documentType] || '項目'
     return {
       success: true as const,
-      filename: `${progressPrefix}_${safeTitle}_${stamp}.pdf`,
+      filename: `${prefix}_${safeTitle}_${stamp}.pdf`,
       bytes,
     }
   } catch (e: any) {

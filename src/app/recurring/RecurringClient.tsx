@@ -12,6 +12,7 @@ import {
   updateOpenInstance,
 } from '@/app/actions/recurring'
 import { RECURRING_INTERVAL_PRESETS } from '@/lib/recurring'
+import { PageHelpHeading } from '@/components/HelpTip'
 
 type Category = {
   id: string
@@ -210,6 +211,13 @@ export default function RecurringClient({
 
   return (
     <div className="space-y-8">
+      <PageHelpHeading
+        locale={locale}
+        title={t('recurringPage')}
+        titleKey="helpRecurringTitle"
+        bodyKey="helpRecurringBody"
+        subtitle={t('recurringPageHint')}
+      />
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-gray-900">

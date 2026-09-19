@@ -3,6 +3,11 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, Save, User as UserIcon } from 'lucide-react';
 import { getMyProfile, saveMyProfile } from '@/app/actions/payroll';
+import {
+  readHelpTipsEnabled,
+  writeHelpTipsEnabled,
+} from '@/lib/helpTipsPreference';
+import { createTranslator, LOCALE_COOKIE, normalizeLocale, type Locale } from '@/lib/i18n';
 
 export type ProfileRow = {
   userId: string;
@@ -128,7 +133,20 @@ export default function ProfileTab(props: Props) {
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [helpTipsEnabled, setHelpTipsEnabled] = useState(true);
+  const [locale, setLocale] = useState<Locale>('zh-HK');
   const readonly = !props.isSelf && !props.isAdmin;
+  const t = createTranslator(locale);
+
+  useEffect(() => {
+    setHelpTipsEnabled(readHelpTipsEnabled());
+    try {
+      const match = document.cookie.match(new RegExp(`(?:^|; )${LOCALE_COOKIE}=([^;]*)`));
+      setLocale(normalizeLocale(match?.[1] ? decodeURIComponent(match[1]) : null));
+    } catch {
+      setLocale('zh-HK');
+    }
+  }, []);
 
   const onChange = <K extends keyof ProfileRow>(key: K, value: ProfileRow[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -186,6 +204,26 @@ export default function ProfileTab(props: Props) {
         </div>
       </div>
       <div className="p-4 space-y-4 text-sm">
+        {props.isSelf ? (
+          <Section title="介面偏好 / Preferences">
+            <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={helpTipsEnabled}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setHelpTipsEnabled(next);
+                  writeHelpTipsEnabled(next);
+                }}
+              />
+              <span>
+                <span className="block font-medium text-slate-800">{t('helpTipsPreference')}</span>
+                <span className="mt-0.5 block text-xs text-slate-500">{t('helpTipsPreferenceHint')}</span>
+              </span>
+            </label>
+          </Section>
+        ) : null}
         <Section title="法定姓名 (必填)">
           <Field label="英文姓名 Legal Name *">
             <input className="w-full border border-slate-300 rounded px-2 py-1.5 disabled:bg-slate-50" disabled={readonly} value={form.legalNameEn} onChange={(e) => onChange('legalNameEn', e.target.value)} placeholder="e.g. CHAN TAI MAN"/>

@@ -33,6 +33,7 @@ import {
   taskCompletionPercent,
   type ProjectCompletionStats,
 } from '@/lib/projects/completion'
+import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 
 type ContactProfile = {
   contactPhone?: string | null
@@ -307,6 +308,9 @@ export default function ProjectDetailClient({
   const [busy, setBusy] = useState(false)
   const [pdfLocale, setPdfLocale] = useState<'zh' | 'en'>(locale === 'en' ? 'en' : 'zh')
   const [pdfIncludeAttachments, setPdfIncludeAttachments] = useState(false)
+  const [pdfDocumentType, setPdfDocumentType] = useState<
+    'project' | 'progress' | 'schedule' | 'sectionList' | 'finance'
+  >('schedule')
   const [pdfBusy, setPdfBusy] = useState(false)
 
   const memberIdSet = useMemo(
@@ -766,6 +770,11 @@ export default function ProjectDetailClient({
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-bold text-gray-900">{project.title}</h1>
+          <LocaleHelpTip
+            locale={locale}
+            titleKey="helpProjectDetailTitle"
+            bodyKey="helpProjectDetailBody"
+          />
           {isTemp ? (
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
               {t('projectTempAccessBadge')}
@@ -867,6 +876,26 @@ export default function ProjectDetailClient({
               <div className="text-xs font-semibold text-gray-600">{t('projectPdfExport')}</div>
               <div className="flex flex-wrap items-center gap-2">
                 <select
+                  value={pdfDocumentType}
+                  onChange={(e) =>
+                    setPdfDocumentType(
+                      e.target.value as
+                        | 'project'
+                        | 'progress'
+                        | 'schedule'
+                        | 'sectionList'
+                        | 'finance'
+                    )
+                  }
+                  className="min-w-[10rem] flex-1 rounded-xl bg-white px-3 py-2 text-xs outline-none shadow-sm"
+                >
+                  <option value="schedule">{t('projectPdfTypeSchedule')}</option>
+                  <option value="sectionList">{t('projectPdfTypeSectionList')}</option>
+                  <option value="finance">{t('projectPdfTypeFinance')}</option>
+                  <option value="progress">{t('projectPdfTypeProgress')}</option>
+                  <option value="project">{t('projectPdfTypeProject')}</option>
+                </select>
+                <select
                   value={pdfLocale}
                   onChange={(e) => setPdfLocale(e.target.value as 'zh' | 'en')}
                   className="rounded-xl bg-white px-3 py-2 text-xs outline-none shadow-sm"
@@ -874,6 +903,8 @@ export default function ProjectDetailClient({
                   <option value="zh">{t('projectPdfLocaleZh')}</option>
                   <option value="en">{t('projectPdfLocaleEn')}</option>
                 </select>
+              </div>
+              {pdfDocumentType === 'project' || pdfDocumentType === 'progress' ? (
                 <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
                   <input
                     type="checkbox"
@@ -882,7 +913,7 @@ export default function ProjectDetailClient({
                   />
                   {t('projectPdfIncludeAttachments')}
                 </label>
-              </div>
+              ) : null}
               <button
                 type="button"
                 disabled={busy || pdfBusy}
@@ -891,28 +922,14 @@ export default function ProjectDetailClient({
                     exportProjectPdf(project.id, {
                       locale: pdfLocale,
                       includeAttachments: pdfIncludeAttachments,
-                    })
-                  )
-                }
-                className="w-full rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                {pdfBusy ? t('projectPdfExporting') : t('projectPdfExportProject')}
-              </button>
-              <button
-                type="button"
-                disabled={busy || pdfBusy}
-                onClick={() =>
-                  runPdfExport(() =>
-                    exportProjectPdf(project.id, {
-                      locale: pdfLocale,
-                      includeAttachments: false,
-                      progressReport: true,
+                      documentType: pdfDocumentType,
+                      progressReport: pdfDocumentType === 'progress',
                     })
                   )
                 }
                 className="w-full rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
-                {pdfBusy ? t('projectPdfExporting') : t('projectProgressReport')}
+                {pdfBusy ? t('projectPdfExporting') : t('projectPdfGenerate')}
               </button>
             </div>
           ) : null}
@@ -1166,6 +1183,11 @@ export default function ProjectDetailClient({
                                     exportProjectSectionPdf(row.id, {
                                       locale: pdfLocale,
                                       includeAttachments: pdfIncludeAttachments,
+                                      documentType:
+                                        pdfDocumentType === 'schedule' ||
+                                        pdfDocumentType === 'sectionList'
+                                          ? pdfDocumentType
+                                          : undefined,
                                     })
                                   )
                                 }
@@ -1766,6 +1788,14 @@ export default function ProjectDetailClient({
 
       {activeTab === 'ledger' && isFullMember ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">{t('projectLedger')}</h2>
+            <LocaleHelpTip
+              locale={locale}
+              titleKey="helpProjectLedgerTitle"
+              bodyKey="helpProjectLedgerBody"
+            />
+          </div>
           {!canViewFullLedger ? (
             <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
               {t('projectLedgerMemberHint')}
@@ -1917,6 +1947,14 @@ export default function ProjectDetailClient({
 
       {activeTab === 'temp' && canManageTempAccess ? (
         <div className="space-y-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">{t('projectTempAccess')}</h2>
+            <LocaleHelpTip
+              locale={locale}
+              titleKey="helpProjectTempTitle"
+              bodyKey="helpProjectTempBody"
+            />
+          </div>
           <p className="text-sm text-gray-500">{t('projectTempAccessHint')}</p>
           <p className="text-xs text-gray-400">{t('projectTempAccountLoginHint')}</p>
 
@@ -2425,7 +2463,13 @@ export default function ProjectDetailClient({
             </select>
           </label>
           <div>
-            <div className="mb-1 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
+            <FieldHelpLabel
+              locale={locale}
+              label={t('projectMembers')}
+              titleKey="helpProjectMembersTitle"
+              bodyKey="helpProjectMembersBody"
+              className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-500"
+            />
             <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
               {t('projectMemberRoleHint')}
             </p>

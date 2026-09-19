@@ -11,6 +11,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import RecordDetailModal from '../RecordDetailModal'
+import { LocaleHelpTip } from '@/components/HelpTip'
 
 type Props = {
   categories: any[]
@@ -1325,7 +1326,14 @@ export default function ReportClient({ categories, users, pools, locale }: Props
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#007AFF]/80">{t('report')}</p>
-            <h2 className="mt-1 text-xl font-bold text-gray-900">{t('financeReportExport')}</h2>
+            <div className="mt-1 flex items-center gap-2">
+              <h2 className="text-xl font-bold text-gray-900">{t('financeReportExport')}</h2>
+              <LocaleHelpTip
+                locale={locale}
+                titleKey="helpReportTitle"
+                bodyKey="helpReportBody"
+              />
+            </div>
             <p className="mt-1.5 max-w-2xl text-sm text-gray-500">{hintText}</p>
           </div>
           {activeCount > 0 && (
