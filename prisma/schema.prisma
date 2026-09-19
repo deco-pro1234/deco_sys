@@ -109,7 +109,9 @@ model Record {
   type          String // "INCOME" | "EXPENSE"
   status        String   @default("APPROVED") // "PENDING" (待审) | "APPROVED" (已审) | "REJECTED" (驳回)
   date          DateTime // 记录日期
-  note          String? // 备注说明
+  /** Short keywords / labels (e.g. OCR vendor, order no.) */
+  content       String?
+  note          String? // 备注说明（较长叙述）
   amount        Float // 金额（正数/负数）
   attachmentUrl String? // 附件路径
   createdAt     DateTime @default(now())
@@ -142,6 +144,8 @@ model PrivateRecord {
   id            String   @id @default(uuid())
   type          String // "INCOME" | "EXPENSE"
   date          DateTime
+  /** Short keywords / labels (e.g. OCR vendor, order no.) */
+  content       String?
   note          String?
   customCategory String?
   amount        Float

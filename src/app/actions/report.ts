@@ -84,6 +84,7 @@ export async function getReportRecords(filter: ReportFilter) {
       ...(where.AND || []),
       {
         OR: [
+          { content: { contains: kw, mode: 'insensitive' } },
           { note: { contains: kw, mode: 'insensitive' } },
           { memos: { some: { content: { contains: kw, mode: 'insensitive' } } } },
         ],

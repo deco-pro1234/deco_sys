@@ -131,10 +131,11 @@ export default function ActivityDetailModal({
       setPendingOcrKeywords((current) => (current.trim() ? `${current.trim()}\n${payload}` : payload))
       return
     }
-    if (payload.noteText) {
-      setNote((current: string) => (current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText))
+    const combined = [payload.contentText, payload.noteText].filter(Boolean).join('\n')
+    if (combined) {
+      setNote((current: string) => (current.trim() ? `${current.trim()}\n${combined}` : combined))
       setPendingOcrKeywords((current) =>
-        current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText
+        current.trim() ? `${current.trim()}\n${combined}` : combined
       )
     }
     if (payload.attachmentMemo) {

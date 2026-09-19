@@ -9,7 +9,8 @@ import { getAISettings } from './settings'
 import {
   fillOcrUserPrompt,
   formatOcrAttachmentMemo,
-  formatOcrKeywordsForNote,
+  formatOcrContentKeywords,
+  formatOcrDetailForNote,
   normalizeOcrResult,
   parseJsonFromText,
   parseOcrAmount,
@@ -136,12 +137,16 @@ export async function recognizeAttachmentNote(input: RecognizeAttachmentInput) {
       const text = extractAssistantText(payload)
       const parsed = normalizeOcrResult(parseJsonFromText(text))
       const noteLocale = locale === 'en' ? 'en' : 'zh-HK'
-      const noteText = formatOcrKeywordsForNote(parsed, 80)
+      const contentText = formatOcrContentKeywords(parsed, 80)
+      const noteText = formatOcrDetailForNote(parsed, 400)
       const attachmentMemo = formatOcrAttachmentMemo(parsed, noteLocale, 12)
       const amount = parseOcrAmount(parsed.amount)
 
       return {
         success: true as const,
+        /** Short keywords for record content field */
+        contentText,
+        /** Detailed summary for record note field */
         noteText,
         attachmentMemo,
         amount,
@@ -209,8 +214,10 @@ export async function recognizeAndAppendOcr(input: RecognizeAndAppendInput) {
     }
 
     const noteText = recognized.noteText || ''
+    const contentText = recognized.contentText || ''
     const attachmentMemo = recognized.attachmentMemo || ''
     const memoPrefix = locale === 'en' ? 'OCR' : '圖像辨識'
+    const memoBody = [contentText, noteText].filter(Boolean).join('｜')
 
     await prisma.$transaction(async (tx) => {
       if (attachmentMemo) {
@@ -223,12 +230,15 @@ export async function recognizeAndAppendOcr(input: RecognizeAndAppendInput) {
       if (attachment.recordId && attachment.record) {
         await tx.record.update({
           where: { id: attachment.recordId },
-          data: { note: appendNote(attachment.record.note, noteText) },
+          data: {
+            content: appendNote(attachment.record.content, contentText),
+            note: appendNote(attachment.record.note, noteText),
+          },
         })
-        if (noteText) {
+        if (memoBody) {
           await tx.memo.create({
             data: {
-              content: `${memoPrefix}: ${noteText}`,
+              content: `${memoPrefix}: ${memoBody}`,
               authorId: session.userId,
               recordId: attachment.recordId,
             },
@@ -237,40 +247,45 @@ export async function recognizeAndAppendOcr(input: RecognizeAndAppendInput) {
       } else if (attachment.privateRecordId && attachment.privateRecord) {
         await tx.privateRecord.update({
           where: { id: attachment.privateRecordId },
-          data: { note: appendNote(attachment.privateRecord.note, noteText) },
+          data: {
+            content: appendNote(attachment.privateRecord.content, contentText),
+            note: appendNote(attachment.privateRecord.note, noteText),
+          },
         })
-        if (noteText) {
+        if (memoBody) {
           await tx.memo.create({
             data: {
-              content: `${memoPrefix}: ${noteText}`,
+              content: `${memoPrefix}: ${memoBody}`,
               authorId: session.userId,
               privateRecordId: attachment.privateRecordId,
             },
           })
         }
       } else if (attachment.contractId && attachment.contract) {
+        const combined = [contentText, noteText].filter(Boolean).join('\n')
         await tx.contract.update({
           where: { id: attachment.contractId },
-          data: { note: appendNote(attachment.contract.note, noteText) },
+          data: { note: appendNote(attachment.contract.note, combined) },
         })
-        if (noteText) {
+        if (memoBody) {
           await tx.memo.create({
             data: {
-              content: `${memoPrefix}: ${noteText}`,
+              content: `${memoPrefix}: ${memoBody}`,
               authorId: session.userId,
               contractId: attachment.contractId,
             },
           })
         }
       } else if (attachment.activityId && attachment.activity) {
+        const combined = [contentText, noteText].filter(Boolean).join('\n')
         await tx.activity.update({
           where: { id: attachment.activityId },
-          data: { note: appendNote(attachment.activity.note, noteText) },
+          data: { note: appendNote(attachment.activity.note, combined) },
         })
-        if (noteText) {
+        if (noteText || contentText) {
           await tx.memo.create({
             data: {
-              content: `${memoPrefix}: ${noteText}`,
+              content: `${memoPrefix}: ${memoBody}`,
               authorId: session.userId,
               activityId: attachment.activityId,
             },
@@ -289,6 +304,7 @@ export async function recognizeAndAppendOcr(input: RecognizeAndAppendInput) {
 
     return {
       success: true as const,
+      contentText,
       noteText,
       attachmentMemo,
       amount: recognized.amount ?? null,
