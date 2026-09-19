@@ -9,6 +9,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import PrivateRecordDetailModal from '../PrivateRecordDetailModal'
+import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 
 type PrivateRecordItem = {
   id: string
@@ -270,7 +271,14 @@ export default function PrivateLedgerClient({
       <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">{canManage ? t('myPrivateLedger') : `${owner.roleName} - ${t('privateLedger')}`}</h2>
+            <h2 className="flex items-center gap-2 text-xl font-semibold text-gray-900">
+              <span>{canManage ? t('myPrivateLedger') : `${owner.roleName} - ${t('privateLedger')}`}</span>
+              <LocaleHelpTip
+                locale={locale}
+                titleKey="helpPrivateLedgerTitle"
+                bodyKey="helpPrivateLedgerBody"
+              />
+            </h2>
             <p className="mt-2 text-sm text-gray-500">{t('privateLedgerPageHint')}</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -289,7 +297,13 @@ export default function PrivateLedgerClient({
             <div className="mt-2 text-lg font-semibold text-gray-900">{formatCurrency(locale, balance)}</div>
           </div>
           <div className="rounded-2xl bg-[#F2F2F7] p-4">
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500">{t('privateLedgerVisibility')}</div>
+            <FieldHelpLabel
+              locale={locale}
+              label={t('privateLedgerVisibility')}
+              titleKey="helpPrivateLedgerVisibilityTitle"
+              bodyKey="helpPrivateLedgerVisibilityBody"
+              className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500"
+            />
             {canManage ? (
               <select
                 value={currentVisibility}
