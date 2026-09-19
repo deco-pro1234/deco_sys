@@ -7,6 +7,15 @@ import { getRecurringReminderItems } from './recurring'
 
 export type ReminderBucket = 'overdue' | 'today' | 'upcoming'
 
+export type ReminderKind =
+  | 'project_start'
+  | 'project_end'
+  | 'project_task_start'
+  | 'project_task_due'
+  | 'contract'
+  | 'activity'
+  | 'recurring'
+
 export type ReminderItem = {
   id: string
   title: string
@@ -15,6 +24,8 @@ export type ReminderItem = {
   daysDiff: number
   reminderDays: number
   href: string
+  /** Optional subtype for badges / grouping labels */
+  kind?: ReminderKind
 }
 
 function getDaysDiff(dateValue: Date) {

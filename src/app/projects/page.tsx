@@ -5,6 +5,7 @@ import { getCurrentLocale } from '@/lib/locale'
 import { isProjectTempAccount } from '@/lib/access'
 import {
   getProjectMemberCandidates,
+  getProjectReminderItems,
   getProjects,
 } from '../actions/project'
 import ProjectsClient from './ProjectsClient'
@@ -28,9 +29,10 @@ export default async function ProjectsPage() {
 
   const locale = await getCurrentLocale()
   const projectTemp = isProjectTempAccount(session)
-  const [projects, candidates] = await Promise.all([
+  const [projects, candidates, reminders] = await Promise.all([
     getProjects(),
     session.isAdmin && !projectTemp ? getProjectMemberCandidates() : Promise.resolve([]),
+    getProjectReminderItems(),
   ])
 
   return (
@@ -42,6 +44,7 @@ export default async function ProjectsPage() {
         isProjectTemp={projectTemp}
         initialProjects={toClientJSON(projects)}
         memberCandidates={toClientJSON(candidates)}
+        initialReminders={toClientJSON(reminders)}
       />
     </div>
   )
