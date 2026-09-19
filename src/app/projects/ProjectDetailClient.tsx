@@ -158,6 +158,7 @@ type ProjectDetail = {
     type: string
     amount: number
     date: string | Date
+    content?: string | null
     note?: string | null
     createdById?: string
     createdBy?: { id?: string; roleName?: string | null } | null
@@ -304,6 +305,7 @@ export default function ProjectDetailClient({
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
   const [ledgerDate, setLedgerDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [ledgerContent, setLedgerContent] = useState('')
   const [ledgerNote, setLedgerNote] = useState('')
   const [ledgerAttachments, setLedgerAttachments] = useState<ClientAttachment[]>([])
   const [ledgerOcrAttachmentIndex, setLedgerOcrAttachmentIndex] = useState(0)
@@ -727,13 +729,14 @@ export default function ProjectDetailClient({
     if (payload.amount != null) {
       setLedgerAmount(String(Math.abs(payload.amount)))
     }
+    if (payload.contentText) {
+      setLedgerContent((current) =>
+        current.trim() ? `${current.trim()}｜${payload.contentText}` : payload.contentText
+      )
+    }
     if (payload.noteText) {
       setLedgerNote((current) =>
         current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText
-      )
-    } else if (payload.contentText) {
-      setLedgerNote((current) =>
-        current.trim() ? `${current.trim()}\n${payload.contentText}` : payload.contentText
       )
     }
     if (payload.attachmentMemo) {
@@ -751,6 +754,7 @@ export default function ProjectDetailClient({
 
   const resetLedgerForm = () => {
     setLedgerAmount('')
+    setLedgerContent('')
     setLedgerNote('')
     setLedgerAttachments([])
     setLedgerOcrAttachmentIndex(0)
@@ -1903,12 +1907,29 @@ export default function ProjectDetailClient({
             onChange={(e) => setLedgerDate(e.target.value)}
             className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
           />
-          <input
-            value={ledgerNote}
-            onChange={(e) => setLedgerNote(e.target.value)}
-            placeholder={t('note')}
-            className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-          />
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">
+              {t('recordContentOptional')}
+            </label>
+            <input
+              value={ledgerContent}
+              onChange={(e) => setLedgerContent(e.target.value)}
+              placeholder={t('recordContentPlaceholder')}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">
+              {t('noteOptional')}
+            </label>
+            <textarea
+              value={ledgerNote}
+              onChange={(e) => setLedgerNote(e.target.value)}
+              rows={3}
+              placeholder={t('noteLongPlaceholder')}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+          </div>
           <div className="space-y-3 rounded-2xl border border-dashed border-gray-300 bg-[#F8FAFC] p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">
@@ -2003,6 +2024,7 @@ export default function ProjectDetailClient({
                   type: ledgerType,
                   amount: Number(ledgerAmount),
                   date: ledgerDate,
+                  content: ledgerContent,
                   note: ledgerNote,
                   attachments:
                     ledgerAttachments.length > 0
@@ -2037,6 +2059,11 @@ export default function ProjectDetailClient({
                         {entry.type === 'INCOME' ? t('income') : t('expense')}{' '}
                         {formatCurrency(locale, entry.amount)}
                       </div>
+                      {entry.content ? (
+                        <div className="mt-0.5 text-xs font-medium text-gray-700">
+                          {entry.content}
+                        </div>
+                      ) : null}
                       <div className="text-xs text-gray-500">
                         {dayInput(entry.date)}
                         {entry.note ? ` · ${entry.note}` : ''}
