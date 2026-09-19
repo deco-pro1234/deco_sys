@@ -6,6 +6,7 @@ import { createTranslator, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import ActivityDetailModal from '../ActivityDetailModal'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
+import { PageHelpHeading } from '@/components/HelpTip'
 
 type ActivityItem = {
   id: string
@@ -239,8 +240,15 @@ export default function ActivitiesClient({ locale, currentUserId, isAdmin, initi
       )}
 
       <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-5">
-        <h2 className="text-xl font-semibold text-gray-900">{t('activitiesPage')}</h2>
-        <p className="mt-2 text-sm text-gray-500">{t('activitiesPageHint')}</p>
+        <PageHelpHeading
+          locale={locale}
+          title={t('activitiesPage')}
+          titleKey="helpActivitiesTitle"
+          bodyKey="helpActivitiesBody"
+          subtitle={t('activitiesPageHint')}
+          headingClassName="text-xl font-semibold text-gray-900"
+          as="h2"
+        />
       </section>
 
       <section className="rounded-2xl border border-gray-100 bg-[#F2F8FF] p-4 shadow-sm sm:rounded-3xl sm:p-6">

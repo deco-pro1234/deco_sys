@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { createProject } from '../actions/project'
 import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
+import { PageHelpHeading } from '@/components/HelpTip'
 import type { ProjectCompletionStats } from '@/lib/projects/completion'
 import type { ReminderItem, ReminderKind } from '../actions/reminder'
 
@@ -159,12 +160,13 @@ export default function ProjectsClient({
   return (
     <div className="mx-auto max-w-4xl space-y-4 px-0 py-4 sm:px-0">
       <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-bold text-gray-900">
-          {isProjectTemp ? t('projectTempMyTasks') : t('projectsPage')}
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">
-          {isProjectTemp ? t('projectsPageTempHint') : t('projectsPageHint')}
-        </p>
+        <PageHelpHeading
+          locale={locale}
+          title={isProjectTemp ? t('projectTempMyTasks') : t('projectsPage')}
+          titleKey="helpProjectsTitle"
+          bodyKey="helpProjectsBody"
+          subtitle={isProjectTemp ? t('projectsPageTempHint') : t('projectsPageHint')}
+        />
       </div>
 
       {initialReminders.length > 0 ? (

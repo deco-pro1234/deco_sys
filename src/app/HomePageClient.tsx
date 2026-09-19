@@ -7,6 +7,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import RecordDetailModal from './RecordDetailModal'
+import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 
 type SessionInfo = {
   roleName: string
@@ -287,7 +288,14 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
       <section className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-gray-100 text-center w-full max-w-full overflow-hidden relative">
         <div className="mb-4 flex items-start justify-between gap-3 text-left sm:mb-6">
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase tracking-[0.16em] text-gray-400">{t('currentRole')}</div>
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.16em] text-gray-400">
+              <span>{t('currentRole')}</span>
+              <LocaleHelpTip
+                locale={locale}
+                titleKey="helpPublicLedgerTitle"
+                bodyKey="helpPublicLedgerBody"
+              />
+            </div>
             <div className="mt-1 truncate text-sm font-semibold text-gray-800 sm:text-base">{session.roleName}</div>
           </div>
           <div className="shrink-0 rounded-full bg-[#F2F2F7] px-3 py-1 text-xs font-semibold text-gray-500">
@@ -435,9 +443,13 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider flex items-center gap-2">
-                {t('pool')}
-              </label>
+              <FieldHelpLabel
+                locale={locale}
+                label={t('pool')}
+                titleKey="helpPublicLedgerPoolTitle"
+                bodyKey="helpPublicLedgerPoolBody"
+                className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500"
+              />
               <select
                 required
                 value={poolId}

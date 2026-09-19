@@ -7,6 +7,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import OcrSavedAttachmentButton from '@/components/OcrSavedAttachmentButton'
 import NoteTimeline from '@/components/NoteTimeline'
 import { addRecordMemo } from '../actions/record'
+import { LocaleHelpTip } from '@/components/HelpTip'
 
 type CategoryNode = {
   id: string
@@ -135,7 +136,14 @@ export default function ReviewClient({
 
   return (
     <div className="space-y-6 pt-4">
-      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+        <LocaleHelpTip
+          locale={locale}
+          titleKey="helpReviewTitle"
+          bodyKey="helpReviewBody"
+        />
+      </div>
       <div className="flex space-x-6 border-b border-gray-200">
         <button
           className={`pb-2 font-semibold ${tab === 'PENDING' ? 'border-b-2 border-[#007AFF] text-[#007AFF]' : 'text-gray-500'}`}

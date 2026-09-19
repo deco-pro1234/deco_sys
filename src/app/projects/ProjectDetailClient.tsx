@@ -33,6 +33,7 @@ import {
   taskCompletionPercent,
   type ProjectCompletionStats,
 } from '@/lib/projects/completion'
+import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 
 type ContactProfile = {
   contactPhone?: string | null
@@ -749,6 +750,11 @@ export default function ProjectDetailClient({
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-bold text-gray-900">{project.title}</h1>
+          <LocaleHelpTip
+            locale={locale}
+            titleKey="helpProjectDetailTitle"
+            bodyKey="helpProjectDetailBody"
+          />
           {isTemp ? (
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
               {t('projectTempAccessBadge')}
@@ -1735,6 +1741,14 @@ export default function ProjectDetailClient({
 
       {activeTab === 'ledger' && isFullMember ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">{t('projectLedger')}</h2>
+            <LocaleHelpTip
+              locale={locale}
+              titleKey="helpProjectLedgerTitle"
+              bodyKey="helpProjectLedgerBody"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -1872,6 +1886,14 @@ export default function ProjectDetailClient({
 
       {activeTab === 'temp' && canManageTempAccess ? (
         <div className="space-y-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">{t('projectTempAccess')}</h2>
+            <LocaleHelpTip
+              locale={locale}
+              titleKey="helpProjectTempTitle"
+              bodyKey="helpProjectTempBody"
+            />
+          </div>
           <p className="text-sm text-gray-500">{t('projectTempAccessHint')}</p>
           <p className="text-xs text-gray-400">{t('projectTempAccountLoginHint')}</p>
 
@@ -2380,7 +2402,13 @@ export default function ProjectDetailClient({
             </select>
           </label>
           <div>
-            <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
+            <FieldHelpLabel
+              locale={locale}
+              label={t('projectMembers')}
+              titleKey="helpProjectMembersTitle"
+              bodyKey="helpProjectMembersBody"
+              className="mb-2 flex items-center gap-1.5 text-xs font-medium text-gray-500"
+            />
             <div className="flex flex-wrap gap-2">
               {memberCandidates.map((u) => (
                 <button
