@@ -1,5 +1,7 @@
 import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { loadChineseFonts } from '@/lib/fonts/loadChineseFont'
+import { drawBrandHeader } from '@/lib/projects/pdfBrand'
 
 export type ProjectPdfLocale = 'zh' | 'en'
 
@@ -44,6 +46,23 @@ export type ProjectPdfSectionNode = {
   children?: ProjectPdfSectionNode[]
 }
 
+export type ProjectPdfLedgerEntry = {
+  type: 'INCOME' | 'EXPENSE' | string
+  amount: number
+  date: Date | string
+  note?: string | null
+  createdBy?: string | null
+}
+
+export type ProjectPdfMode =
+  | 'task'
+  | 'section'
+  | 'project'
+  | 'progress'
+  | 'schedule'
+  | 'sectionList'
+  | 'finance'
+
 export type GenerateProjectPdfInput = {
   projectTitle: string
   projectStatus: string
@@ -62,9 +81,10 @@ export type GenerateProjectPdfInput = {
     percent: number
     isComplete: boolean
   } | null
-  mode: 'task' | 'section' | 'project' | 'progress'
+  mode: ProjectPdfMode
   task?: ProjectPdfTask | null
   sections?: ProjectPdfSectionNode[]
+  ledger?: ProjectPdfLedgerEntry[]
   includeAttachments: boolean
   locale: ProjectPdfLocale
 }
@@ -74,6 +94,9 @@ type Labels = {
   reportTitleSection: string
   reportTitleProject: string
   reportTitleProgress: string
+  reportTitleSchedule: string
+  reportTitleSectionList: string
+  reportTitleFinance: string
   project: string
   status: string
   owner: string
@@ -103,6 +126,23 @@ type Labels = {
   statusDoing: string
   statusDone: string
   tempMember: string
+  colStart: string
+  colEnd: string
+  colSection: string
+  colTask: string
+  colStatus: string
+  colAssignees: string
+  colContent: string
+  noSchedule: string
+  income: string
+  expense: string
+  balance: string
+  colDate: string
+  colType: string
+  colAmount: string
+  colBy: string
+  emptyLedger: string
+  emptyTasks: string
 }
 
 function labelsFor(locale: ProjectPdfLocale): Labels {
@@ -112,6 +152,9 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
       reportTitleSection: 'Section report',
       reportTitleProject: 'Project report',
       reportTitleProgress: 'Project progress report',
+      reportTitleSchedule: 'Work schedule',
+      reportTitleSectionList: 'Section task list',
+      reportTitleFinance: 'Project finance summary',
       project: 'Project',
       status: 'Status',
       owner: 'Owner',
@@ -141,6 +184,23 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
       statusDoing: 'Doing',
       statusDone: 'Done',
       tempMember: 'temp',
+      colStart: 'Start',
+      colEnd: 'End',
+      colSection: 'Section',
+      colTask: 'Task',
+      colStatus: 'Status',
+      colAssignees: 'Assignees',
+      colContent: 'Content',
+      noSchedule: 'No start time',
+      income: 'Income',
+      expense: 'Expense',
+      balance: 'Balance',
+      colDate: 'Date',
+      colType: 'Type',
+      colAmount: 'Amount (HKD)',
+      colBy: 'Created by',
+      emptyLedger: 'No ledger entries',
+      emptyTasks: 'No tasks',
     }
   }
   return {
@@ -148,6 +208,9 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
     reportTitleSection: '分組報告',
     reportTitleProject: '項目報告',
     reportTitleProgress: '項目進度報表',
+    reportTitleSchedule: '工作排程',
+    reportTitleSectionList: '分組事項列表',
+    reportTitleFinance: '項目財務摘要',
     project: '項目',
     status: '狀態',
     owner: '負責人',
@@ -177,6 +240,23 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
     statusDoing: '進行中',
     statusDone: '已完成',
     tempMember: '臨時',
+    colStart: '開始',
+    colEnd: '結束',
+    colSection: '分組',
+    colTask: '事項',
+    colStatus: '狀態',
+    colAssignees: '負責人',
+    colContent: '內容',
+    noSchedule: '未設開始時間',
+    income: '收入',
+    expense: '支出',
+    balance: '結餘',
+    colDate: '日期',
+    colType: '類型',
+    colAmount: '金額（HKD）',
+    colBy: '建立者',
+    emptyLedger: '尚無帳冊紀錄',
+    emptyTasks: '尚無事項',
   }
 }
 
@@ -206,6 +286,58 @@ function scheduleLabel(
   const end = formatDateTime(task.dueDate, locale)
   if (start && end) return `${start} – ${end}`
   return end || start || ''
+}
+
+function timeMs(value?: Date | string | null) {
+  if (!value) return null
+  const d = typeof value === 'string' ? new Date(value) : value
+  const t = d.getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+/** Chronological: startAt ↑, then dueDate ↑; missing start last. */
+export function sortTasksForSchedule(tasks: ProjectPdfTask[]) {
+  return [...tasks].sort((a, b) => {
+    const as = timeMs(a.startAt)
+    const bs = timeMs(b.startAt)
+    if (as == null && bs == null) {
+      const ad = timeMs(a.dueDate)
+      const bd = timeMs(b.dueDate)
+      if (ad == null && bd == null) return a.title.localeCompare(b.title)
+      if (ad == null) return 1
+      if (bd == null) return -1
+      return ad - bd
+    }
+    if (as == null) return 1
+    if (bs == null) return -1
+    if (as !== bs) return as - bs
+    const ad = timeMs(a.dueDate) ?? Number.MAX_SAFE_INTEGER
+    const bd = timeMs(b.dueDate) ?? Number.MAX_SAFE_INTEGER
+    if (ad !== bd) return ad - bd
+    return a.title.localeCompare(b.title)
+  })
+}
+
+function flattenTasks(sections: ProjectPdfSectionNode[] | undefined): ProjectPdfTask[] {
+  const out: ProjectPdfTask[] = []
+  const walk = (nodes: ProjectPdfSectionNode[]) => {
+    for (const n of nodes) {
+      for (const t of n.tasks) {
+        out.push({ ...t, sectionPath: t.sectionPath || n.title })
+      }
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(sections || [])
+  return out
+}
+
+function sortSectionTasksChronologically(sections: ProjectPdfSectionNode[]): ProjectPdfSectionNode[] {
+  return sections.map((s) => ({
+    ...s,
+    tasks: sortTasksForSchedule(s.tasks),
+    children: s.children ? sortSectionTasksChronologically(s.children) : [],
+  }))
 }
 
 function statusLabel(status: string, L: Labels) {
@@ -414,7 +546,8 @@ function drawSectionNode(
   L: Labels,
   locale: ProjectPdfLocale,
   fontReg: string,
-  fontBold: string
+  fontBold: string,
+  compactTasks = false
 ) {
   y = ensureSpace(doc, y, 24, margin, pageH)
   doc.setFont(fontBold, 'bold')
@@ -447,21 +580,51 @@ function drawSectionNode(
     fontReg
   )
 
-  for (const task of section.tasks) {
-    y = drawTaskBlock(
-      doc,
-      task,
-      includeAttachments,
-      indent,
-      y,
-      maxWidth - section.depth * 8,
-      margin,
-      pageH,
-      L,
-      locale,
-      fontReg,
-      fontBold
-    )
+  if (compactTasks) {
+    for (const task of section.tasks) {
+      y = ensureSpace(doc, y, 16, margin, pageH)
+      doc.setFont(fontBold, 'bold')
+      doc.setFontSize(10)
+      y = writeWrapped(doc, `• ${task.title}`, indent + 4, y, maxWidth - section.depth * 8 - 4, 12)
+      doc.setFont(fontReg, 'normal')
+      doc.setFontSize(8)
+      const bits = [
+        statusLabel(task.status, L),
+        scheduleLabel(task, locale),
+        task.assignees?.join(', ') || '',
+      ].filter(Boolean)
+      if (bits.length) {
+        y = writeWrapped(doc, bits.join(' · '), indent + 10, y, maxWidth - section.depth * 8 - 10, 10)
+      }
+      if (task.content?.trim()) {
+        y = writeWrapped(
+          doc,
+          task.content.trim().slice(0, 280),
+          indent + 10,
+          y,
+          maxWidth - section.depth * 8 - 10,
+          10
+        )
+      }
+      y += 6
+    }
+  } else {
+    for (const task of section.tasks) {
+      y = drawTaskBlock(
+        doc,
+        task,
+        includeAttachments,
+        indent,
+        y,
+        maxWidth - section.depth * 8,
+        margin,
+        pageH,
+        L,
+        locale,
+        fontReg,
+        fontBold
+      )
+    }
   }
 
   for (const child of section.children || []) {
@@ -477,7 +640,8 @@ function drawSectionNode(
       L,
       locale,
       fontReg,
-      fontBold
+      fontBold,
+      compactTasks
     )
   }
   return y
@@ -489,7 +653,7 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
   const doc = new jsPDF({ unit: 'pt', format: 'a4', compress: true })
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
-  const margin = 40
+  const margin = 36
   const maxWidth = pageW - margin * 2
   let fontReg = 'helvetica'
   let fontBold = 'helvetica'
@@ -519,20 +683,23 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
         ? L.reportTitleSection
         : input.mode === 'progress'
           ? L.reportTitleProgress
-          : L.reportTitleProject
+          : input.mode === 'schedule'
+            ? L.reportTitleSchedule
+            : input.mode === 'sectionList'
+              ? L.reportTitleSectionList
+              : input.mode === 'finance'
+                ? L.reportTitleFinance
+                : L.reportTitleProject
 
-  let y = margin
-  doc.setFillColor(236, 242, 255)
-  doc.rect(0, 0, pageW, 52, 'F')
-  doc.setFont(fontBold, 'bold')
-  doc.setFontSize(16)
-  doc.setTextColor(0, 122, 255)
-  doc.text(title, pageW / 2, 28, { align: 'center' })
-  doc.setFont(fontReg, 'normal')
-  doc.setFontSize(10)
-  doc.setTextColor(60, 60, 70)
-  doc.text(input.projectTitle, pageW / 2, 44, { align: 'center' })
-  y = 68
+  const { contentTop } = drawBrandHeader(doc, {
+    pageW,
+    margin,
+    fontReg,
+    fontBold,
+    reportTitle: title,
+    projectTitle: input.projectTitle,
+  })
+  let y = contentTop
   doc.setTextColor(30, 30, 30)
 
   const formatDay = (value?: Date | string | null) => {
@@ -562,7 +729,11 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
   for (const line of headerLines) {
     y = writeWrapped(doc, line, margin, y, maxWidth, 12)
   }
-  if (input.projectNote?.trim()) {
+  if (
+    input.projectNote?.trim() &&
+    input.mode !== 'finance' &&
+    input.mode !== 'schedule'
+  ) {
     y += 4
     doc.setFont(fontBold, 'bold')
     doc.text(L.note, margin, y)
@@ -571,6 +742,133 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
     y = writeWrapped(doc, input.projectNote.trim(), margin, y, maxWidth, 11)
   }
   y += 10
+
+  if (input.mode === 'schedule') {
+    const tasks = sortTasksForSchedule(flattenTasks(input.sections))
+    if (tasks.length === 0) {
+      doc.setFont(fontReg, 'normal')
+      doc.setFontSize(10)
+      doc.text(L.emptyTasks, margin, y)
+    } else {
+      autoTable(doc, {
+        startY: y,
+        head: [[
+          L.colStart,
+          L.colEnd,
+          L.colSection,
+          L.colTask,
+          L.colStatus,
+          L.colAssignees,
+          L.colContent,
+        ]],
+        body: tasks.map((task) => [
+          formatDateTime(task.startAt, locale) || L.noSchedule,
+          formatDateTime(task.dueDate, locale) || '—',
+          task.sectionPath || '—',
+          task.title,
+          statusLabel(task.status, L),
+          (task.assignees || []).join(', ') || '—',
+          (task.content || '').trim().slice(0, 160) || '—',
+        ]),
+        styles: {
+          font: fontReg,
+          fontSize: 7.5,
+          cellPadding: 3,
+          overflow: 'linebreak',
+          valign: 'top',
+        },
+        headStyles: {
+          fillColor: [0, 122, 255],
+          textColor: 255,
+          font: fontReg,
+          fontStyle: 'bold',
+          fontSize: 8,
+        },
+        columnStyles: {
+          0: { cellWidth: 68 },
+          1: { cellWidth: 68 },
+          2: { cellWidth: 72 },
+          3: { cellWidth: 78 },
+          4: { cellWidth: 42 },
+          5: { cellWidth: 58 },
+        },
+        margin: { left: margin, right: margin },
+      })
+    }
+    return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer)
+  }
+
+  if (input.mode === 'finance') {
+    const ledger = input.ledger || []
+    const income = ledger.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0)
+    const expense = ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
+    const balance = income - expense
+    const fmt = (n: number) =>
+      new Intl.NumberFormat(locale === 'en' ? 'en-HK' : 'zh-HK', {
+        style: 'currency',
+        currency: 'HKD',
+        minimumFractionDigits: 2,
+      }).format(n)
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(10)
+    doc.text(`${L.income}: ${fmt(income)}`, margin, y)
+    doc.text(`${L.expense}: ${fmt(expense)}`, margin + 150, y)
+    doc.text(`${L.balance}: ${fmt(balance)}`, margin + 300, y)
+    y += 14
+    if (ledger.length === 0) {
+      doc.setFont(fontReg, 'normal')
+      doc.text(L.emptyLedger, margin, y)
+    } else {
+      const sorted = [...ledger].sort((a, b) => (timeMs(a.date) ?? 0) - (timeMs(b.date) ?? 0))
+      autoTable(doc, {
+        startY: y,
+        head: [[L.colDate, L.colType, L.colAmount, L.note, L.colBy]],
+        body: sorted.map((e) => [
+          formatDay(e.date),
+          e.type === 'INCOME' ? L.income : L.expense,
+          fmt(e.amount),
+          e.note?.trim() || '—',
+          e.createdBy || '—',
+        ]),
+        styles: { font: fontReg, fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+        headStyles: {
+          fillColor: [0, 122, 255],
+          textColor: 255,
+          font: fontReg,
+          fontStyle: 'bold',
+        },
+        margin: { left: margin, right: margin },
+      })
+    }
+    return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer)
+  }
+
+  if (input.mode === 'sectionList') {
+    const sections = sortSectionTasksChronologically(input.sections || [])
+    if (sections.length === 0) {
+      doc.setFont(fontReg, 'normal')
+      doc.text(L.emptyTasks, margin, y)
+    } else {
+      for (const section of sections) {
+        y = drawSectionNode(
+          doc,
+          section,
+          false,
+          margin,
+          y,
+          maxWidth,
+          margin,
+          pageH,
+          L,
+          locale,
+          fontReg,
+          fontBold,
+          true
+        )
+      }
+    }
+    return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer)
+  }
 
   if (input.mode === 'task' && input.task) {
     drawTaskBlock(
@@ -601,7 +899,8 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
         L,
         locale,
         fontReg,
-        fontBold
+        fontBold,
+        false
       )
     }
   }

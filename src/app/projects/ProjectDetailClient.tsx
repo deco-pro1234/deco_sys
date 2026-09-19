@@ -296,6 +296,9 @@ export default function ProjectDetailClient({
   const [busy, setBusy] = useState(false)
   const [pdfLocale, setPdfLocale] = useState<'zh' | 'en'>(locale === 'en' ? 'en' : 'zh')
   const [pdfIncludeAttachments, setPdfIncludeAttachments] = useState(false)
+  const [pdfDocumentType, setPdfDocumentType] = useState<
+    'project' | 'progress' | 'schedule' | 'sectionList' | 'finance'
+  >('schedule')
   const [pdfBusy, setPdfBusy] = useState(false)
 
   const memberIdSet = useMemo(
@@ -842,6 +845,26 @@ export default function ProjectDetailClient({
               <div className="text-xs font-semibold text-gray-600">{t('projectPdfExport')}</div>
               <div className="flex flex-wrap items-center gap-2">
                 <select
+                  value={pdfDocumentType}
+                  onChange={(e) =>
+                    setPdfDocumentType(
+                      e.target.value as
+                        | 'project'
+                        | 'progress'
+                        | 'schedule'
+                        | 'sectionList'
+                        | 'finance'
+                    )
+                  }
+                  className="min-w-[10rem] flex-1 rounded-xl bg-white px-3 py-2 text-xs outline-none shadow-sm"
+                >
+                  <option value="schedule">{t('projectPdfTypeSchedule')}</option>
+                  <option value="sectionList">{t('projectPdfTypeSectionList')}</option>
+                  <option value="finance">{t('projectPdfTypeFinance')}</option>
+                  <option value="progress">{t('projectPdfTypeProgress')}</option>
+                  <option value="project">{t('projectPdfTypeProject')}</option>
+                </select>
+                <select
                   value={pdfLocale}
                   onChange={(e) => setPdfLocale(e.target.value as 'zh' | 'en')}
                   className="rounded-xl bg-white px-3 py-2 text-xs outline-none shadow-sm"
@@ -849,6 +872,8 @@ export default function ProjectDetailClient({
                   <option value="zh">{t('projectPdfLocaleZh')}</option>
                   <option value="en">{t('projectPdfLocaleEn')}</option>
                 </select>
+              </div>
+              {pdfDocumentType === 'project' || pdfDocumentType === 'progress' ? (
                 <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
                   <input
                     type="checkbox"
@@ -857,7 +882,7 @@ export default function ProjectDetailClient({
                   />
                   {t('projectPdfIncludeAttachments')}
                 </label>
-              </div>
+              ) : null}
               <button
                 type="button"
                 disabled={busy || pdfBusy}
@@ -866,28 +891,14 @@ export default function ProjectDetailClient({
                     exportProjectPdf(project.id, {
                       locale: pdfLocale,
                       includeAttachments: pdfIncludeAttachments,
-                    })
-                  )
-                }
-                className="w-full rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                {pdfBusy ? t('projectPdfExporting') : t('projectPdfExportProject')}
-              </button>
-              <button
-                type="button"
-                disabled={busy || pdfBusy}
-                onClick={() =>
-                  runPdfExport(() =>
-                    exportProjectPdf(project.id, {
-                      locale: pdfLocale,
-                      includeAttachments: false,
-                      progressReport: true,
+                      documentType: pdfDocumentType,
+                      progressReport: pdfDocumentType === 'progress',
                     })
                   )
                 }
                 className="w-full rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
-                {pdfBusy ? t('projectPdfExporting') : t('projectProgressReport')}
+                {pdfBusy ? t('projectPdfExporting') : t('projectPdfGenerate')}
               </button>
             </div>
           ) : null}
@@ -1141,6 +1152,11 @@ export default function ProjectDetailClient({
                                     exportProjectSectionPdf(row.id, {
                                       locale: pdfLocale,
                                       includeAttachments: pdfIncludeAttachments,
+                                      documentType:
+                                        pdfDocumentType === 'schedule' ||
+                                        pdfDocumentType === 'sectionList'
+                                          ? pdfDocumentType
+                                          : undefined,
                                     })
                                   )
                                 }
