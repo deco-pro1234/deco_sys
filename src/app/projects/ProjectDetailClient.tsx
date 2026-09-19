@@ -35,6 +35,7 @@ import {
 } from '@/lib/projects/completion'
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
+import ProjectMemberPicker, { type ProjectMemberPick } from './ProjectMemberPicker'
 
 type ContactProfile = {
   contactPhone?: string | null
@@ -185,7 +186,6 @@ type Props = {
   currentUserId: string
   isAdmin: boolean
   project: ProjectDetail
-  memberCandidates: Candidate[]
   tempAccountCandidates?: Candidate[]
 }
 
@@ -249,7 +249,6 @@ export default function ProjectDetailClient({
   currentUserId,
   isAdmin,
   project,
-  memberCandidates,
   tempAccountCandidates = [],
 }: Props) {
   const t = createTranslator(locale)
@@ -271,14 +270,17 @@ export default function ProjectDetailClient({
   const [reminderDays, setReminderDays] = useState(String(project.reminderDays || 15))
   const [note, setNote] = useState(project.note || '')
   const [contactUserId, setContactUserId] = useState(project.contactUserId || '')
-  const [memberRoles, setMemberRoles] = useState<Record<string, 'MANAGER' | 'MEMBER'>>(() => {
-    const map: Record<string, 'MANAGER' | 'MEMBER'> = {}
-    for (const m of project.members) {
-      if (m.userId === project.ownerId) continue
-      map[m.userId] = m.role === 'MANAGER' ? 'MANAGER' : 'MEMBER'
-    }
-    return map
-  })
+  const [selectedMembers, setSelectedMembers] = useState<ProjectMemberPick[]>(() =>
+    project.members
+      .filter((m) => m.userId !== project.ownerId)
+      .map((m) => ({
+        id: m.userId,
+        roleName: m.user?.roleName || m.userId,
+        email: m.user?.email,
+        loginPhone: m.user?.loginPhone,
+        role: m.role === 'MANAGER' ? 'MANAGER' : 'MEMBER',
+      }))
+  )
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskContent, setTaskContent] = useState('')
@@ -469,13 +471,28 @@ export default function ProjectDetailClient({
   }, [assigneeOverrides])
 
   useEffect(() => {
-    const map: Record<string, 'MANAGER' | 'MEMBER'> = {}
-    for (const m of project.members) {
-      if (m.userId === project.ownerId) continue
-      map[m.userId] = m.role === 'MANAGER' ? 'MANAGER' : 'MEMBER'
-    }
-    setMemberRoles(map)
+    setSelectedMembers(
+      project.members
+        .filter((m) => m.userId !== project.ownerId)
+        .map((m) => ({
+          id: m.userId,
+          roleName: m.user?.roleName || m.userId,
+          email: m.user?.email,
+          loginPhone: m.user?.loginPhone,
+          role: m.role === 'MANAGER' ? ('MANAGER' as const) : ('MEMBER' as const),
+        }))
+    )
   }, [project.members, project.ownerId])
+
+  useEffect(() => {
+    const allowed = new Set([
+      project.ownerId,
+      ...selectedMembers.map((m) => m.id),
+    ])
+    if (contactUserId && !allowed.has(contactUserId)) {
+      setContactUserId('')
+    }
+  }, [contactUserId, selectedMembers, project.ownerId])
 
   useEffect(() => {
     setAssigneeOverrides((prev) => {
@@ -2649,18 +2666,16 @@ export default function ProjectDetailClient({
               className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
             >
               <option value="">{t('projectContactNone')}</option>
-              {memberCandidates.map((u) => (
+              {project.ownerId ? (
+                <option value={project.ownerId}>
+                  {project.owner?.roleName || project.ownerId} ({t('projectRoleOwner')})
+                </option>
+              ) : null}
+              {selectedMembers.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.roleName}
                 </option>
               ))}
-              {project.members
-                .filter((m) => !memberCandidates.some((c) => c.id === m.userId))
-                .map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.user?.roleName || m.userId}
-                  </option>
-                ))}
             </select>
           </label>
           <div>
@@ -2674,124 +2689,18 @@ export default function ProjectDetailClient({
             <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
               {t('projectMemberRoleHint')}
             </p>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F2F2F7] px-3 py-2">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-gray-900">
-                    {project.owner?.roleName || project.ownerId}
-                  </div>
-                  <div className="text-[11px] text-gray-500">{t('projectRoleOwner')}</div>
-                </div>
-                <span className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-[11px] font-semibold text-indigo-700">
-                  {t('projectRoleOwner')}
-                </span>
-              </div>
-              {(() => {
-                const byId = new Map<string, { id: string; roleName: string }>()
-                for (const u of memberCandidates) {
-                  byId.set(u.id, { id: u.id, roleName: u.roleName })
-                }
-                for (const m of project.members) {
-                  if (m.userId === project.ownerId) continue
-                  if (!byId.has(m.userId)) {
-                    byId.set(m.userId, {
-                      id: m.userId,
-                      roleName: m.user?.roleName || m.userId,
-                    })
-                  }
-                }
-                return Array.from(byId.values()).map((u) => {
-                  const selected = memberRoles[u.id]
-                  const isSelected = Boolean(selected)
-                  return (
-                    <div
-                      key={u.id}
-                      className={`rounded-xl px-3 py-2 ${
-                        isSelected ? 'bg-[#EEF5FF]' : 'bg-[#F2F2F7]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setMemberRoles((prev) => {
-                              if (prev[u.id]) {
-                                const next = { ...prev }
-                                delete next[u.id]
-                                return next
-                              }
-                              return { ...prev, [u.id]: 'MEMBER' }
-                            })
-                          }
-                          className="min-w-0 text-left"
-                        >
-                          <div className="truncate text-sm font-medium text-gray-900">
-                            {u.roleName}
-                          </div>
-                          <div className="text-[11px] text-gray-500">
-                            {isSelected
-                              ? selected === 'MANAGER'
-                                ? t('projectRoleManager')
-                                : t('projectRoleMember')
-                              : t('projectMemberNotSelected')}
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setMemberRoles((prev) => {
-                              if (prev[u.id]) {
-                                const next = { ...prev }
-                                delete next[u.id]
-                                return next
-                              }
-                              return { ...prev, [u.id]: 'MEMBER' }
-                            })
-                          }
-                          className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
-                            isSelected
-                              ? 'bg-[#007AFF] text-white'
-                              : 'bg-white text-gray-600'
-                          }`}
-                        >
-                          {isSelected ? t('projectMemberSelected') : t('projectMemberAdd')}
-                        </button>
-                      </div>
-                      {isSelected ? (
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMemberRoles((prev) => ({ ...prev, [u.id]: 'MEMBER' }))
-                            }
-                            className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold ${
-                              selected === 'MEMBER'
-                                ? 'bg-white text-[#007AFF] shadow-sm'
-                                : 'bg-white/60 text-gray-500'
-                            }`}
-                          >
-                            {t('projectRoleMember')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMemberRoles((prev) => ({ ...prev, [u.id]: 'MANAGER' }))
-                            }
-                            className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold ${
-                              selected === 'MANAGER'
-                                ? 'bg-white text-[#007AFF] shadow-sm'
-                                : 'bg-white/60 text-gray-500'
-                            }`}
-                          >
-                            {t('projectRoleManager')}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })
-              })()}
-            </div>
+            <ProjectMemberPicker
+              locale={locale}
+              projectId={project.id}
+              selected={selectedMembers}
+              onChange={setSelectedMembers}
+              owner={{
+                id: project.ownerId,
+                roleName: project.owner?.roleName || project.ownerId,
+              }}
+              allowManagerRole
+              disabled={busy}
+            />
           </div>
           <button
             type="button"
@@ -2810,7 +2719,7 @@ export default function ProjectDetailClient({
                 if (!a.success) return a
                 return setProjectMembers(
                   project.id,
-                  Object.entries(memberRoles).map(([userId, role]) => ({ userId, role }))
+                  selectedMembers.map((m) => ({ userId: m.id, role: m.role }))
                 )
               })
             }

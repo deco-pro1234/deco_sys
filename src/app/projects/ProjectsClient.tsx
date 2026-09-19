@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { createProject } from '../actions/project'
 import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
+import ProjectMemberPicker, { type ProjectMemberPick } from './ProjectMemberPicker'
 import { PageHelpHeading } from '@/components/HelpTip'
 import type { ProjectCompletionStats } from '@/lib/projects/completion'
 import type { ReminderItem, ReminderKind } from '../actions/reminder'
@@ -33,15 +34,12 @@ type ProjectListItem = {
   canViewFullLedger?: boolean
 }
 
-type Candidate = { id: string; roleName: string; email: string; isAdmin: boolean }
-
 type Props = {
   locale: Locale
   currentUserId: string
   isAdmin: boolean
   isProjectTemp?: boolean
   initialProjects: ProjectListItem[]
-  memberCandidates: Candidate[]
   initialReminders?: ReminderItem[]
 }
 
@@ -75,7 +73,6 @@ export default function ProjectsClient({
   isAdmin,
   isProjectTemp = false,
   initialProjects,
-  memberCandidates,
   initialReminders = [],
 }: Props) {
   const t = createTranslator(locale)
@@ -84,7 +81,7 @@ export default function ProjectsClient({
   const [status, setStatus] = useState<(typeof STATUS_KEYS)[number]>('PLANNING')
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
-  const [memberIds, setMemberIds] = useState<string[]>([])
+  const [selectedMembers, setSelectedMembers] = useState<ProjectMemberPick[]>([])
   const [contactUserId, setContactUserId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'ALL' | (typeof STATUS_KEYS)[number]>('ALL')
@@ -92,6 +89,14 @@ export default function ProjectsClient({
   const [reminderBucketFilter, setReminderBucketFilter] = useState<
     'ALL' | 'overdue' | 'today' | 'upcoming'
   >('ALL')
+
+  const memberIds = useMemo(() => selectedMembers.map((m) => m.id), [selectedMembers])
+
+  useEffect(() => {
+    if (contactUserId && !memberIds.includes(contactUserId)) {
+      setContactUserId('')
+    }
+  }, [contactUserId, memberIds])
 
   const filtered = useMemo(() => {
     if (filter === 'ALL') return initialProjects
@@ -125,10 +130,6 @@ export default function ProjectsClient({
     return map[s] || s
   }
 
-  const toggleMember = (id: string) => {
-    setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-  }
-
   const handleCreate = async () => {
     if (!isAdmin) return
     setSubmitting(true)
@@ -148,7 +149,7 @@ export default function ProjectsClient({
     setTitle('')
     setNote('')
     setStartDate(new Date().toISOString().slice(0, 10))
-    setMemberIds([])
+    setSelectedMembers([])
     setContactUserId('')
     router.refresh()
     if (res.id) router.push(`/projects/${res.id}`)
@@ -302,44 +303,36 @@ export default function ProjectsClient({
             rows={2}
             className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
           />
-          {memberCandidates.length > 0 ? (
-            <div>
-              <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
-              <div className="flex flex-wrap gap-2">
-                {memberCandidates.map((u) => (
-                  <button
-                    key={u.id}
-                    type="button"
-                    onClick={() => toggleMember(u.id)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                      memberIds.includes(u.id)
-                        ? 'bg-[#007AFF] text-white'
-                        : 'bg-[#F2F2F7] text-gray-600'
-                    }`}
-                  >
+          <div>
+            <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
+            <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
+              {t('projectMemberRoleHint')}
+            </p>
+            <ProjectMemberPicker
+              locale={locale}
+              selected={selectedMembers}
+              onChange={setSelectedMembers}
+              allowManagerRole={false}
+              disabled={submitting}
+            />
+            <label className="mt-3 block">
+              <span className="mb-1 block text-xs font-medium text-gray-500">
+                {t('projectContact')}
+              </span>
+              <select
+                value={contactUserId}
+                onChange={(e) => setContactUserId(e.target.value)}
+                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              >
+                <option value="">{t('projectContactNone')}</option>
+                {selectedMembers.map((u) => (
+                  <option key={u.id} value={u.id}>
                     {u.roleName}
-                  </button>
+                  </option>
                 ))}
-              </div>
-              <label className="mt-3 block">
-                <span className="mb-1 block text-xs font-medium text-gray-500">
-                  {t('projectContact')}
-                </span>
-                <select
-                  value={contactUserId}
-                  onChange={(e) => setContactUserId(e.target.value)}
-                  className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-                >
-                  <option value="">{t('projectContactNone')}</option>
-                  {memberCandidates.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.roleName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
+              </select>
+            </label>
+          </div>
           <button
             type="button"
             disabled={submitting || !title.trim()}
