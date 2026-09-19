@@ -157,7 +157,8 @@ type ProjectDetail = {
     amount: number
     date: string | Date
     note?: string | null
-    createdBy?: { roleName?: string | null } | null
+    createdById?: string
+    createdBy?: { id?: string; roleName?: string | null } | null
   }>
   memos: Array<{
     id: string
@@ -169,6 +170,8 @@ type ProjectDetail = {
   accessMode?: 'full' | 'temp'
   canManageTempAccess?: boolean
   canManageProject?: boolean
+  canViewFullLedger?: boolean
+  memberRole?: 'OWNER' | 'MANAGER' | 'MEMBER' | null
   myTaskAccess?: Record<string, { canView: boolean; canAddMemo: boolean }> | null
   completion?: ProjectCompletionStats | null
 }
@@ -239,6 +242,7 @@ function taskAssigneeNames(task: ProjectTask) {
 
 export default function ProjectDetailClient({
   locale,
+  currentUserId,
   isAdmin,
   project,
   memberCandidates,
@@ -249,6 +253,7 @@ export default function ProjectDetailClient({
   const isTemp = project.accessMode === 'temp'
   const canManageTempAccess = Boolean(project.canManageTempAccess)
   const canManageProject = Boolean(project.canManageProject || isAdmin)
+  const canViewFullLedger = Boolean(project.canViewFullLedger || isAdmin)
   const isFullMember = !isTemp
 
   const [tab, setTab] = useState<'tasks' | 'ledger' | 'memo' | 'settings' | 'temp' | 'contacts'>(
@@ -262,7 +267,14 @@ export default function ProjectDetailClient({
   const [reminderDays, setReminderDays] = useState(String(project.reminderDays || 15))
   const [note, setNote] = useState(project.note || '')
   const [contactUserId, setContactUserId] = useState(project.contactUserId || '')
-  const [memberIds, setMemberIds] = useState(project.members.map((m) => m.userId))
+  const [memberRoles, setMemberRoles] = useState<Record<string, 'MANAGER' | 'MEMBER'>>(() => {
+    const map: Record<string, 'MANAGER' | 'MEMBER'> = {}
+    for (const m of project.members) {
+      if (m.userId === project.ownerId) continue
+      map[m.userId] = m.role === 'MANAGER' ? 'MANAGER' : 'MEMBER'
+    }
+    return map
+  })
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskContent, setTaskContent] = useState('')
@@ -446,8 +458,13 @@ export default function ProjectDetailClient({
   }, [assigneeOverrides])
 
   useEffect(() => {
-    setMemberIds(project.members.map((m) => m.userId))
-  }, [project.members])
+    const map: Record<string, 'MANAGER' | 'MEMBER'> = {}
+    for (const m of project.members) {
+      if (m.userId === project.ownerId) continue
+      map[m.userId] = m.role === 'MANAGER' ? 'MANAGER' : 'MEMBER'
+    }
+    setMemberRoles(map)
+  }, [project.members, project.ownerId])
 
   useEffect(() => {
     setAssigneeOverrides((prev) => {
@@ -782,27 +799,41 @@ export default function ProjectDetailClient({
                   {completion.done}/{completion.total}
                 </div>
               </div>
-              <div className="rounded-xl bg-[#ECFDF5] px-2 py-2">
-                <div className="text-emerald-700/70">{t('income')}</div>
-                <div className="font-semibold text-emerald-800">
-                  {formatCurrency(locale, summary.income)}
+              {canViewFullLedger ? (
+                <>
+                  <div className="rounded-xl bg-[#ECFDF5] px-2 py-2">
+                    <div className="text-emerald-700/70">{t('income')}</div>
+                    <div className="font-semibold text-emerald-800">
+                      {formatCurrency(locale, summary.income)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#FEF2F2] px-2 py-2">
+                    <div className="text-rose-700/70">{t('expense')}</div>
+                    <div className="font-semibold text-rose-800">
+                      {formatCurrency(locale, summary.expense)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
+                    <div className="text-gray-400">{t('projectLedgerBalance')}</div>
+                    <div className="font-semibold text-gray-800">
+                      {formatCurrency(locale, summary.balance)}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="col-span-1 rounded-xl bg-[#F2F2F7] px-2 py-2 sm:col-span-3">
+                  <div className="text-gray-400">{t('projectLedgerMyScope')}</div>
+                  <div className="font-semibold text-gray-800">
+                    {formatCurrency(locale, summary.balance)}
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-gray-400">
+                    {t('projectLedgerMemberHint')}
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-xl bg-[#FEF2F2] px-2 py-2">
-                <div className="text-rose-700/70">{t('expense')}</div>
-                <div className="font-semibold text-rose-800">
-                  {formatCurrency(locale, summary.expense)}
-                </div>
-              </div>
-              <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                <div className="text-gray-400">{t('projectLedgerBalance')}</div>
-                <div className="font-semibold text-gray-800">
-                  {formatCurrency(locale, summary.balance)}
-                </div>
-              </div>
+              )}
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
-              {t('projectLedgerHint')}
+              {canViewFullLedger ? t('projectLedgerHint') : t('projectLedgerMemberHint')}
             </p>
           </>
         ) : (
@@ -1735,6 +1766,11 @@ export default function ProjectDetailClient({
 
       {activeTab === 'ledger' && isFullMember ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          {!canViewFullLedger ? (
+            <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+              {t('projectLedgerMemberHint')}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -1806,32 +1842,41 @@ export default function ProjectDetailClient({
                 {t('projectLedgerEmpty')}
               </div>
             ) : (
-              project.ledger.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between gap-3 py-3">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">
-                      {entry.type === 'INCOME' ? t('income') : t('expense')}{' '}
-                      {formatCurrency(locale, entry.amount)}
+              project.ledger.map((entry) => {
+                const canDelete =
+                  canViewFullLedger || entry.createdById === currentUserId
+                return (
+                  <div key={entry.id} className="flex items-center justify-between gap-3 py-3">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">
+                        {entry.type === 'INCOME' ? t('income') : t('expense')}{' '}
+                        {formatCurrency(locale, entry.amount)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {dayInput(entry.date)}
+                        {entry.note ? ` · ${entry.note}` : ''}
+                        {canViewFullLedger && entry.createdBy?.roleName
+                          ? ` · ${entry.createdBy.roleName}`
+                          : ''}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {dayInput(entry.date)}
-                      {entry.note ? ` · ${entry.note}` : ''}
-                    </div>
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          if (confirm(t('confirmDeleteItem'))) {
+                            run(() => deleteProjectLedgerEntry(entry.id))
+                          }
+                        }}
+                        className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                      >
+                        {t('delete')}
+                      </button>
+                    ) : null}
                   </div>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      if (confirm(t('confirmDeleteItem'))) {
-                        run(() => deleteProjectLedgerEntry(entry.id))
-                      }
-                    }}
-                    className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
-                  >
-                    {t('delete')}
-                  </button>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>
@@ -2380,26 +2425,127 @@ export default function ProjectDetailClient({
             </select>
           </label>
           <div>
-            <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
-            <div className="flex flex-wrap gap-2">
-              {memberCandidates.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() =>
-                    setMemberIds((prev) =>
-                      prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id]
-                    )
+            <div className="mb-1 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
+            <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
+              {t('projectMemberRoleHint')}
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F2F2F7] px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-gray-900">
+                    {project.owner?.roleName || project.ownerId}
+                  </div>
+                  <div className="text-[11px] text-gray-500">{t('projectRoleOwner')}</div>
+                </div>
+                <span className="shrink-0 rounded-lg bg-indigo-100 px-2 py-1 text-[11px] font-semibold text-indigo-700">
+                  {t('projectRoleOwner')}
+                </span>
+              </div>
+              {(() => {
+                const byId = new Map<string, { id: string; roleName: string }>()
+                for (const u of memberCandidates) {
+                  byId.set(u.id, { id: u.id, roleName: u.roleName })
+                }
+                for (const m of project.members) {
+                  if (m.userId === project.ownerId) continue
+                  if (!byId.has(m.userId)) {
+                    byId.set(m.userId, {
+                      id: m.userId,
+                      roleName: m.user?.roleName || m.userId,
+                    })
                   }
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                    memberIds.includes(u.id)
-                      ? 'bg-[#007AFF] text-white'
-                      : 'bg-[#F2F2F7] text-gray-600'
-                  }`}
-                >
-                  {u.roleName}
-                </button>
-              ))}
+                }
+                return Array.from(byId.values()).map((u) => {
+                  const selected = memberRoles[u.id]
+                  const isSelected = Boolean(selected)
+                  return (
+                    <div
+                      key={u.id}
+                      className={`rounded-xl px-3 py-2 ${
+                        isSelected ? 'bg-[#EEF5FF]' : 'bg-[#F2F2F7]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMemberRoles((prev) => {
+                              if (prev[u.id]) {
+                                const next = { ...prev }
+                                delete next[u.id]
+                                return next
+                              }
+                              return { ...prev, [u.id]: 'MEMBER' }
+                            })
+                          }
+                          className="min-w-0 text-left"
+                        >
+                          <div className="truncate text-sm font-medium text-gray-900">
+                            {u.roleName}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            {isSelected
+                              ? selected === 'MANAGER'
+                                ? t('projectRoleManager')
+                                : t('projectRoleMember')
+                              : t('projectMemberNotSelected')}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMemberRoles((prev) => {
+                              if (prev[u.id]) {
+                                const next = { ...prev }
+                                delete next[u.id]
+                                return next
+                              }
+                              return { ...prev, [u.id]: 'MEMBER' }
+                            })
+                          }
+                          className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                            isSelected
+                              ? 'bg-[#007AFF] text-white'
+                              : 'bg-white text-gray-600'
+                          }`}
+                        >
+                          {isSelected ? t('projectMemberSelected') : t('projectMemberAdd')}
+                        </button>
+                      </div>
+                      {isSelected ? (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMemberRoles((prev) => ({ ...prev, [u.id]: 'MEMBER' }))
+                            }
+                            className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold ${
+                              selected === 'MEMBER'
+                                ? 'bg-white text-[#007AFF] shadow-sm'
+                                : 'bg-white/60 text-gray-500'
+                            }`}
+                          >
+                            {t('projectRoleMember')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMemberRoles((prev) => ({ ...prev, [u.id]: 'MANAGER' }))
+                            }
+                            className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold ${
+                              selected === 'MANAGER'
+                                ? 'bg-white text-[#007AFF] shadow-sm'
+                                : 'bg-white/60 text-gray-500'
+                            }`}
+                          >
+                            {t('projectRoleManager')}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </div>
           <button
@@ -2417,7 +2563,10 @@ export default function ProjectDetailClient({
                   contactUserId: contactUserId || null,
                 })
                 if (!a.success) return a
-                return setProjectMembers(project.id, memberIds)
+                return setProjectMembers(
+                  project.id,
+                  Object.entries(memberRoles).map(([userId, role]) => ({ userId, role }))
+                )
               })
             }
             className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"

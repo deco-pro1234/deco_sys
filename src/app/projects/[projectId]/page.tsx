@@ -43,7 +43,7 @@ export default async function ProjectDetailPage({
   if (!project) redirect('/projects')
 
   const [memberCandidates, tempCandidates] = await Promise.all([
-    project.canManageProject ? getProjectMemberCandidates() : Promise.resolve([]),
+    project.canManageProject ? getProjectMemberCandidates(projectId) : Promise.resolve([]),
     project.canManageTempAccess
       ? getProjectTempAccountCandidates(projectId)
       : Promise.resolve([]),

@@ -19,6 +19,8 @@ export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'DONE' | 'ARCHIVED'
 export type ProjectTaskStatus = 'TODO' | 'DOING' | 'DONE'
 export type ProjectLedgerType = 'INCOME' | 'EXPENSE'
 export type ProjectAccessMode = 'full' | 'temp'
+/** Project roster role (not system admin). */
+export type ProjectMemberRole = 'OWNER' | 'MANAGER' | 'MEMBER'
 
 /** Section-scoped temp grant. Empty sectionId = uncategorized bucket. View is always implied. */
 export type SectionAccessGrantInput = {
@@ -303,24 +305,36 @@ async function assertCanViewProject(projectId: string) {
       session,
       project,
       role: 'ADMIN' as const,
+      memberRole: 'OWNER' as ProjectMemberRole,
       accessMode: 'full' as const,
       taskGrants: [] as TaskGrantRow[],
       canManageTempAccess: true,
       canManageProject: true,
+      canViewFullLedger: true,
     }
   }
 
   const membership = await getMembership(projectId, session.userId)
   const isOwner = project.ownerId === session.userId || membership?.role === 'OWNER'
   if (membership || project.ownerId === session.userId) {
+    const memberRole: ProjectMemberRole = isOwner
+      ? 'OWNER'
+      : membership?.role === 'MANAGER'
+        ? 'MANAGER'
+        : 'MEMBER'
+    const canManageProject = memberRole === 'OWNER'
+    const canManageTempAccess = memberRole === 'OWNER' || memberRole === 'MANAGER'
+    const canViewFullLedger = memberRole === 'OWNER' || memberRole === 'MANAGER'
     return {
       session,
       project,
-      role: (membership?.role || (isOwner ? 'OWNER' : 'MEMBER')) as 'OWNER' | 'MEMBER',
+      role: memberRole,
+      memberRole,
       accessMode: 'full' as const,
       taskGrants: [] as TaskGrantRow[],
-      canManageTempAccess: isOwner || session.isAdmin,
-      canManageProject: false,
+      canManageTempAccess,
+      canManageProject,
+      canViewFullLedger,
     }
   }
 
@@ -333,10 +347,12 @@ async function assertCanViewProject(projectId: string) {
     session,
     project,
     role: 'TEMP' as const,
+    memberRole: null as ProjectMemberRole | null,
     accessMode: 'temp' as const,
     taskGrants,
     canManageTempAccess: false,
     canManageProject: false,
+    canViewFullLedger: false,
   }
 }
 
@@ -437,7 +453,7 @@ export async function getProjects() {
         include: { user: { select: { id: true, roleName: true } } },
       },
       _count: { select: { tasks: true, ledger: true } },
-      ledger: { select: { type: true, amount: true } },
+      ledger: { select: { type: true, amount: true, createdById: true } },
       tasks: {
         select: { id: true, dueDate: true, reminderDays: true, status: true },
       },
@@ -455,23 +471,33 @@ export async function getProjects() {
 
   return Promise.all(
     projects.map(async (p) => {
+      const myMembership = p.members.find((m) => m.userId === session.userId)
+      const isOwner = session.isAdmin || p.ownerId === session.userId || myMembership?.role === 'OWNER'
+      const isManager = myMembership?.role === 'MANAGER'
       const isFull =
         session.isAdmin ||
         p.ownerId === session.userId ||
-        p.members.some((m) => m.userId === session.userId)
+        Boolean(myMembership)
       const accessMode: ProjectAccessMode = isFull ? 'full' : 'temp'
+      const canViewFullLedger = isOwner || isManager
       const grantedTaskIds = new Set(
         isFull
           ? []
           : (await listActiveTaskGrants(p.id, session.userId)).map((g) => g.taskId)
       )
 
-      const income = isFull
-        ? p.ledger.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0)
-        : 0
-      const expense = isFull
-        ? p.ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
-        : 0
+      const visibleLedger = !isFull
+        ? []
+        : canViewFullLedger
+          ? p.ledger
+          : p.ledger.filter((e) => e.createdById === session.userId)
+
+      const income = visibleLedger
+        .filter((e) => e.type === 'INCOME')
+        .reduce((s, e) => s + e.amount, 0)
+      const expense = visibleLedger
+        .filter((e) => e.type === 'EXPENSE')
+        .reduce((s, e) => s + e.amount, 0)
       const { ledger: _ledger, sectionAccesses: _sectionAccesses, tasks: allTasks, ...rest } = p
       const scopedTasks = isFull
         ? allTasks
@@ -484,9 +510,17 @@ export async function getProjects() {
         ...rest,
         tasks: openTasks,
         completion,
+        memberRole: isOwner
+          ? ('OWNER' as const)
+          : isManager
+            ? ('MANAGER' as const)
+            : isFull
+              ? ('MEMBER' as const)
+              : null,
+        canViewFullLedger,
         _count: {
           tasks: taskCount,
-          ledger: isFull ? p._count.ledger : 0,
+          ledger: isFull ? (canViewFullLedger ? p._count.ledger : visibleLedger.length) : 0,
         },
         members: isFull ? p.members : [],
         accessMode,
@@ -495,6 +529,7 @@ export async function getProjects() {
               incomeHkd: income,
               expenseHkd: expense,
               balanceHkd: income - expense,
+              scoped: !canViewFullLedger,
             }
           : null,
       }
@@ -559,6 +594,8 @@ export async function getProjectDetail(projectId: string) {
       accessMode: 'temp' as const,
       canManageTempAccess: false,
       canManageProject: false,
+      canViewFullLedger: false,
+      memberRole: null as ProjectMemberRole | null,
       myTaskAccess,
       completion: computeProjectCompletion(project.tasks),
     }
@@ -604,21 +641,35 @@ export async function getProjectDetail(projectId: string) {
   })
   if (!project) return null
 
+  const ledger = ctx.canViewFullLedger
+    ? project.ledger
+    : project.ledger.filter((e) => e.createdById === ctx.session.userId)
+
   return {
     ...project,
+    ledger,
     taskAccesses: [],
     sectionAccesses: Array.isArray(project.sectionAccesses) ? project.sectionAccesses : [],
     accessMode: 'full' as const,
     canManageTempAccess: ctx.canManageTempAccess,
     canManageProject: ctx.canManageProject,
+    canViewFullLedger: ctx.canViewFullLedger,
+    memberRole: ctx.memberRole,
     myTaskAccess: null as Record<string, { canView: boolean; canAddMemo: boolean }> | null,
     completion: computeProjectCompletion(project.tasks),
   }
 }
 
-export async function getProjectMemberCandidates() {
+export async function getProjectMemberCandidates(projectId?: string) {
   const session = await requireSession()
-  if (!session.isAdmin) return []
+  if (!session.isAdmin) {
+    if (!projectId) return []
+    try {
+      await assertCanManageProject(projectId)
+    } catch {
+      return []
+    }
+  }
   return prisma.user.findMany({
     where: {
       accountKind: ACCOUNT_KIND_STANDARD,
@@ -1037,26 +1088,47 @@ export async function deleteProject(projectId: string) {
   }
 }
 
-export async function setProjectMembers(projectId: string, memberIds: string[]) {
+export async function setProjectMembers(
+  projectId: string,
+  members: Array<{ userId: string; role?: 'MANAGER' | 'MEMBER' }> | string[]
+) {
   try {
     const { project } = await assertCanManageProject(projectId)
-    const unique = Array.from(new Set([project.ownerId, ...memberIds.filter(Boolean)]))
+    const normalized = (Array.isArray(members) ? members : []).map((m) =>
+      typeof m === 'string'
+        ? { userId: m, role: 'MEMBER' as const }
+        : {
+            userId: m.userId,
+            role: m.role === 'MANAGER' ? ('MANAGER' as const) : ('MEMBER' as const),
+          }
+    )
+    const uniqueIds = Array.from(
+      new Set([project.ownerId, ...normalized.map((m) => m.userId).filter(Boolean)])
+    )
+    const roleByUser = new Map<string, 'MANAGER' | 'MEMBER'>()
+    for (const row of normalized) {
+      if (row.userId && row.userId !== project.ownerId) {
+        roleByUser.set(row.userId, row.role)
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.projectMember.deleteMany({
         where: {
           projectId,
-          userId: { notIn: unique },
+          userId: { notIn: uniqueIds },
         },
       })
-      for (const userId of unique) {
+      for (const userId of uniqueIds) {
+        const role =
+          userId === project.ownerId ? 'OWNER' : roleByUser.get(userId) || 'MEMBER'
         await tx.projectMember.upsert({
           where: { projectId_userId: { projectId, userId } },
-          update: { role: userId === project.ownerId ? 'OWNER' : 'MEMBER' },
+          update: { role },
           create: {
             projectId,
             userId,
-            role: userId === project.ownerId ? 'OWNER' : 'MEMBER',
+            role,
           },
         })
       }
@@ -1436,7 +1508,11 @@ export async function deleteProjectLedgerEntry(entryId: string) {
     const locale = await getCurrentLocale()
     const t = createTranslator(locale)
     if (!entry) return { success: false, error: t('projectLedgerNotFound') }
-    await assertProjectMember(entry.projectId)
+    const ctx = await assertProjectMember(entry.projectId)
+    const canDeleteOthers = ctx.canViewFullLedger
+    if (!canDeleteOthers && entry.createdById !== ctx.session.userId) {
+      return { success: false, error: t('unauthorized') }
+    }
     await prisma.projectLedgerEntry.delete({ where: { id: entryId } })
     revalidateProjects(entry.projectId)
     return { success: true }

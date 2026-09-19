@@ -21,8 +21,15 @@ type ProjectListItem = {
   members?: Array<{ userId: string; user?: { roleName?: string | null } | null }>
   _count?: { tasks: number; ledger: number }
   completion?: ProjectCompletionStats | null
-  ledgerSummary?: { incomeHkd: number; expenseHkd: number; balanceHkd: number } | null
+  ledgerSummary?: {
+    incomeHkd: number
+    expenseHkd: number
+    balanceHkd: number
+    scoped?: boolean
+  } | null
   accessMode?: 'full' | 'temp'
+  memberRole?: 'OWNER' | 'MANAGER' | 'MEMBER' | null
+  canViewFullLedger?: boolean
 }
 
 type Candidate = { id: string; roleName: string; email: string; isAdmin: boolean }
@@ -418,7 +425,9 @@ export default function ProjectsClient({
                   <div className="text-gray-400">
                     {project.accessMode === 'temp'
                       ? t('projectTempAccessBadge')
-                      : t('projectLedgerBalance')}
+                      : project.ledgerSummary?.scoped
+                        ? t('projectLedgerMyScope')
+                        : t('projectLedgerBalance')}
                   </div>
                   <div className="font-semibold text-gray-800">
                     {project.accessMode === 'temp'
