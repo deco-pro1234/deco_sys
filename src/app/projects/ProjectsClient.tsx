@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { createProject } from '../actions/project'
 import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
+import type { ProjectCompletionStats } from '@/lib/projects/completion'
 
 type ProjectListItem = {
   id: string
@@ -15,8 +16,10 @@ type ProjectListItem = {
   endDate?: string | Date | null
   note?: string | null
   owner?: { id: string; roleName?: string | null } | null
+  contactUser?: { id: string; roleName?: string | null } | null
   members?: Array<{ userId: string; user?: { roleName?: string | null } | null }>
   _count?: { tasks: number; ledger: number }
+  completion?: ProjectCompletionStats | null
   ledgerSummary?: { incomeHkd: number; expenseHkd: number; balanceHkd: number } | null
   accessMode?: 'full' | 'temp'
 }
@@ -52,9 +55,10 @@ export default function ProjectsClient({
   const router = useRouter()
   const [title, setTitle] = useState('')
   const [status, setStatus] = useState<(typeof STATUS_KEYS)[number]>('PLANNING')
-  const [endDate, setEndDate] = useState('')
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
   const [memberIds, setMemberIds] = useState<string[]>([])
+  const [contactUserId, setContactUserId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'ALL' | (typeof STATUS_KEYS)[number]>('ALL')
 
@@ -83,9 +87,10 @@ export default function ProjectsClient({
     const res = await createProject({
       title,
       status,
-      endDate: endDate || null,
+      startDate: startDate || null,
       note,
       memberIds,
+      contactUserId: contactUserId || null,
     })
     setSubmitting(false)
     if (!res.success) {
@@ -94,8 +99,9 @@ export default function ProjectsClient({
     }
     setTitle('')
     setNote('')
-    setEndDate('')
+    setStartDate(new Date().toISOString().slice(0, 10))
     setMemberIds([])
+    setContactUserId('')
     router.refresh()
     if (res.id) router.push(`/projects/${res.id}`)
   }
@@ -132,12 +138,17 @@ export default function ProjectsClient({
                 </option>
               ))}
             </select>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-            />
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                {t('projectStartDate')}
+              </span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+            </label>
           </div>
           <textarea
             value={note}
@@ -165,6 +176,23 @@ export default function ProjectsClient({
                   </button>
                 ))}
               </div>
+              <label className="mt-3 block">
+                <span className="mb-1 block text-xs font-medium text-gray-500">
+                  {t('projectContact')}
+                </span>
+                <select
+                  value={contactUserId}
+                  onChange={(e) => setContactUserId(e.target.value)}
+                  className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                >
+                  <option value="">{t('projectContactNone')}</option>
+                  {memberCandidates.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.roleName}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           ) : null}
           <button
@@ -206,7 +234,9 @@ export default function ProjectsClient({
             {t('projectEmpty')}
           </div>
         ) : (
-          filtered.map((project) => (
+          filtered.map((project) => {
+            const completion = project.completion
+            return (
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
@@ -227,7 +257,7 @@ export default function ProjectsClient({
                   <div className="mt-1 text-xs text-gray-500">
                     {isProjectTemp
                       ? `${t('projectTasks')}: ${project._count?.tasks ?? 0}`
-                      : `${t('projectOwner')}: ${project.owner?.roleName || '—'} · ${t('projectEndDate')}: ${dayLabel(project.endDate)}`}
+                      : `${t('projectOwner')}: ${project.owner?.roleName || '—'} · ${t('projectStartDate')}: ${dayLabel(project.startDate)}`}
                   </div>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#F2F2F7] px-2.5 py-1 text-[11px] font-semibold text-gray-600">
@@ -235,7 +265,15 @@ export default function ProjectsClient({
                 </span>
               </div>
               {!isProjectTemp ? (
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
+                <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
+                  <div className="text-gray-400">{t('projectCompletion')}</div>
+                  <div className="font-semibold text-gray-800">
+                    {completion
+                      ? `${completion.percent}% (${completion.done}/${completion.total})`
+                      : '—'}
+                  </div>
+                </div>
                 <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
                   <div className="text-gray-400">{t('projectTasks')}</div>
                   <div className="font-semibold text-gray-800">{project._count?.tasks ?? 0}</div>
@@ -261,7 +299,8 @@ export default function ProjectsClient({
               </div>
               ) : null}
             </Link>
-          ))
+            )
+          })
         )}
       </div>
     </div>

@@ -28,6 +28,27 @@ import {
   updateProjectSection,
   updateProjectTask,
 } from '../actions/project'
+import {
+  computeProjectCompletion,
+  taskCompletionPercent,
+  type ProjectCompletionStats,
+} from '@/lib/projects/completion'
+
+type ContactProfile = {
+  contactPhone?: string | null
+  contactEmail?: string | null
+  jobTitle?: string | null
+  department?: string | null
+}
+
+type ContactUser = {
+  id: string
+  roleName?: string | null
+  email?: string | null
+  loginPhone?: string | null
+  accountKind?: string | null
+  profile?: ContactProfile | null
+}
 
 type Candidate = {
   id: string
@@ -70,7 +91,7 @@ type ProjectTask = {
   assignee?: { id?: string; roleName?: string | null } | null
   assignees?: Array<{
     userId: string
-    user?: { id: string; roleName?: string | null; email?: string | null } | null
+    user?: ContactUser | null
   }>
   createdBy?: { roleName?: string | null } | null
   memos?: TaskMemo[]
@@ -101,7 +122,7 @@ type SectionAccessRow = {
   scopeKey: string
   canAddMemo: boolean
   expiresAt?: string | Date | null
-  user?: { id: string; roleName?: string | null; email?: string | null } | null
+  user?: ContactUser | null
   section?: {
     id: string
     title: string
@@ -119,12 +140,14 @@ type ProjectDetail = {
   reminderDays: number
   note?: string | null
   ownerId: string
-  owner?: { id: string; roleName?: string | null } | null
+  contactUserId?: string | null
+  owner?: ContactUser | null
+  contactUser?: ContactUser | null
   members: Array<{
     id: string
     userId: string
     role: string
-    user?: { id: string; roleName?: string | null; email?: string | null } | null
+    user?: ContactUser | null
   }>
   tasks: ProjectTask[]
   sections?: ProjectSection[]
@@ -147,6 +170,7 @@ type ProjectDetail = {
   canManageTempAccess?: boolean
   canManageProject?: boolean
   myTaskAccess?: Record<string, { canView: boolean; canAddMemo: boolean }> | null
+  completion?: ProjectCompletionStats | null
 }
 
 type Props = {
@@ -227,15 +251,17 @@ export default function ProjectDetailClient({
   const canManageProject = Boolean(project.canManageProject || isAdmin)
   const isFullMember = !isTemp
 
-  const [tab, setTab] = useState<'tasks' | 'ledger' | 'memo' | 'settings' | 'temp'>(
+  const [tab, setTab] = useState<'tasks' | 'ledger' | 'memo' | 'settings' | 'temp' | 'contacts'>(
     'tasks'
   )
 
   const [title, setTitle] = useState(project.title)
   const [status, setStatus] = useState(project.status)
+  const [startDate, setStartDate] = useState(dayInput(project.startDate))
   const [endDate, setEndDate] = useState(dayInput(project.endDate))
   const [reminderDays, setReminderDays] = useState(String(project.reminderDays || 15))
   const [note, setNote] = useState(project.note || '')
+  const [contactUserId, setContactUserId] = useState(project.contactUserId || '')
   const [memberIds, setMemberIds] = useState(project.members.map((m) => m.userId))
 
   const [taskTitle, setTaskTitle] = useState('')
@@ -445,11 +471,91 @@ export default function ProjectDetailClient({
       ? 'tasks'
       : (tab === 'ledger' || tab === 'memo' || tab === 'settings') && isTemp
         ? 'tasks'
+        : tab === 'contacts' && isTemp
+          ? 'tasks'
         : tab === 'settings' && !canManageProject
           ? canManageTempAccess
             ? 'temp'
             : 'tasks'
           : tab
+
+  const completion = useMemo(
+    () => project.completion || computeProjectCompletion(project.tasks || []),
+    [project.completion, project.tasks]
+  )
+
+  const contactPhoneOf = (u?: ContactUser | null) =>
+    u?.profile?.contactPhone || u?.loginPhone || ''
+  const contactEmailOf = (u?: ContactUser | null) =>
+    u?.profile?.contactEmail || u?.email || ''
+
+  const sectionContactGroups = useMemo(() => {
+    const roots = project.sections || []
+    const groups: Array<{
+      key: string
+      title: string
+      contacts: ContactUser[]
+    }> = []
+
+    const pushUnique = (map: Map<string, ContactUser>, user?: ContactUser | null) => {
+      if (!user?.id) return
+      if (!map.has(user.id)) map.set(user.id, user)
+    }
+
+    for (const root of roots) {
+      const map = new Map<string, ContactUser>()
+      const childIds = new Set((root.children || []).map((c) => c.id))
+      for (const task of project.tasks || []) {
+        const inRoot = task.sectionId === root.id
+        const inChild = task.sectionId ? childIds.has(task.sectionId) : false
+        if (!inRoot && !inChild) continue
+        for (const a of task.assignees || []) pushUnique(map, a.user)
+      }
+      for (const grant of project.sectionAccesses || []) {
+        const sid = grant.sectionId || null
+        if (sid === root.id || (sid && childIds.has(sid))) {
+          pushUnique(map, grant.user)
+        }
+      }
+      groups.push({
+        key: root.id,
+        title: root.title,
+        contacts: Array.from(map.values()),
+      })
+      for (const child of root.children || []) {
+        const childMap = new Map<string, ContactUser>()
+        for (const task of project.tasks || []) {
+          if (task.sectionId !== child.id) continue
+          for (const a of task.assignees || []) pushUnique(childMap, a.user)
+        }
+        for (const grant of project.sectionAccesses || []) {
+          if (grant.sectionId === child.id) pushUnique(childMap, grant.user)
+        }
+        groups.push({
+          key: child.id,
+          title: `${root.title} / ${child.title}`,
+          contacts: Array.from(childMap.values()),
+        })
+      }
+    }
+
+    const uncat = new Map<string, ContactUser>()
+    for (const task of project.tasks || []) {
+      if (task.sectionId) continue
+      for (const a of task.assignees || []) pushUnique(uncat, a.user)
+    }
+    for (const grant of project.sectionAccesses || []) {
+      if (!grant.sectionId) pushUnique(uncat, grant.user)
+    }
+    if (uncat.size > 0) {
+      groups.push({
+        key: '__uncategorized__',
+        title: t('uncategorized'),
+        contacts: Array.from(uncat.values()),
+      })
+    }
+    return groups
+  }, [project.sections, project.tasks, project.sectionAccesses, t])
 
   const summary = useMemo(() => {
     const income = (project.ledger || [])
@@ -625,6 +731,7 @@ export default function ProjectDetailClient({
       ['tasks', t('projectTasks')],
       ...(isFullMember
         ? ([
+            ['contacts', t('projectContactsTab')],
             ['ledger', t('projectLedger')],
             ['memo', t('projectMemos')],
           ] as const)
@@ -654,12 +761,27 @@ export default function ProjectDetailClient({
             <>
               {' '}
               · {t('projectOwner')}: {project.owner?.roleName || '—'}
+              {project.contactUser?.roleName
+                ? ` · ${t('projectContact')}: ${project.contactUser.roleName}`
+                : ''}
+              {' '}
+              · {t('projectCompletion')}: {completion.percent}% ({completion.done}/
+              {completion.total})
             </>
           ) : null}
         </div>
         {isFullMember ? (
           <>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
+              <div className="rounded-xl bg-[#EEF2FF] px-2 py-2">
+                <div className="text-indigo-700/70">{t('projectCompletion')}</div>
+                <div className="font-semibold text-indigo-900">
+                  {completion.percent}%
+                </div>
+                <div className="mt-0.5 text-[10px] text-indigo-700/60">
+                  {completion.done}/{completion.total}
+                </div>
+              </div>
               <div className="rounded-xl bg-[#ECFDF5] px-2 py-2">
                 <div className="text-emerald-700/70">{t('income')}</div>
                 <div className="font-semibold text-emerald-800">
@@ -744,6 +866,22 @@ export default function ProjectDetailClient({
                 className="w-full rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
                 {pdfBusy ? t('projectPdfExporting') : t('projectPdfExportProject')}
+              </button>
+              <button
+                type="button"
+                disabled={busy || pdfBusy}
+                onClick={() =>
+                  runPdfExport(() =>
+                    exportProjectPdf(project.id, {
+                      locale: pdfLocale,
+                      includeAttachments: false,
+                      progressReport: true,
+                    })
+                  )
+                }
+                className="w-full rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {pdfBusy ? t('projectPdfExporting') : t('projectProgressReport')}
               </button>
             </div>
           ) : null}
@@ -1165,7 +1303,7 @@ export default function ProjectDetailClient({
                               </div>
                             ) : null}
                             <div className="mt-1 text-xs text-gray-500">
-                              {taskStatusLabel(task.status)}
+                              {taskStatusLabel(task.status)} · {taskCompletionPercent(task.status)}%
                               {taskScheduleLabel(task) ? ` · ${taskScheduleLabel(task)}` : ''}
                               {names ? ` · ${names}` : ''}
                               {task.attachments && task.attachments.length > 0
@@ -2071,6 +2209,102 @@ export default function ProjectDetailClient({
         </div>
       ) : null}
 
+      {activeTab === 'contacts' && isFullMember ? (
+        <div className="space-y-4 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">{t('projectContact')}</h2>
+            <p className="mt-1 text-xs text-gray-500">{t('projectContactHint')}</p>
+            {(() => {
+              const contact = project.contactUser || project.owner
+              if (!contact) {
+                return <div className="mt-3 text-sm text-gray-400">{t('projectContactNone')}</div>
+              }
+              return (
+                <div className="mt-3 rounded-2xl bg-[#F2F2F7] p-4 text-sm">
+                  <div className="font-semibold text-gray-900">
+                    {contact.roleName || '—'}
+                    {contact.accountKind === 'PROJECT_TEMP' ? (
+                      <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        {t('projectTempAccessBadge')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 space-y-1 text-xs text-gray-600">
+                    <div>
+                      {t('projectContactPhone')}: {contactPhoneOf(contact) || '—'}
+                    </div>
+                    <div>
+                      {t('projectContactEmail')}: {contactEmailOf(contact) || '—'}
+                    </div>
+                    {contact.profile?.jobTitle ? (
+                      <div>
+                        {t('projectContactJobTitle')}: {contact.profile.jobTitle}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">{t('projectOwner')}</h2>
+            <div className="mt-2 rounded-2xl border border-gray-100 p-4 text-sm">
+              <div className="font-semibold text-gray-900">{project.owner?.roleName || '—'}</div>
+              <div className="mt-2 space-y-1 text-xs text-gray-600">
+                <div>
+                  {t('projectContactPhone')}: {contactPhoneOf(project.owner) || '—'}
+                </div>
+                <div>
+                  {t('projectContactEmail')}: {contactEmailOf(project.owner) || '—'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">{t('projectSectionContacts')}</h2>
+            <p className="mt-1 text-xs text-gray-500">{t('projectSectionContactsHint')}</p>
+            <div className="mt-3 space-y-3">
+              {sectionContactGroups.length === 0 ? (
+                <div className="text-sm text-gray-400">{t('projectNoSectionContacts')}</div>
+              ) : (
+                sectionContactGroups.map((group) => (
+                  <div key={group.key} className="rounded-2xl border border-gray-100 p-3">
+                    <div className="text-xs font-semibold text-gray-700">{group.title}</div>
+                    {group.contacts.length === 0 ? (
+                      <div className="mt-2 text-xs text-gray-400">—</div>
+                    ) : (
+                      <div className="mt-2 space-y-2">
+                        {group.contacts.map((c) => (
+                          <div
+                            key={c.id}
+                            className="flex flex-col gap-0.5 rounded-xl bg-[#FAFAFA] px-3 py-2 text-xs text-gray-700 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div className="font-medium text-gray-900">
+                              {c.roleName || '—'}
+                              {c.accountKind === 'PROJECT_TEMP' ? (
+                                <span className="ml-2 text-[10px] text-amber-700">
+                                  {t('projectTempAccessBadge')}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-gray-500">
+                              {[contactPhoneOf(c), contactEmailOf(c)].filter(Boolean).join(' · ') ||
+                                '—'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {activeTab === 'settings' && canManageProject ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
           <input
@@ -2089,12 +2323,28 @@ export default function ProjectDetailClient({
               </option>
             ))}
           </select>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-          />
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              {t('projectStartDate')}
+            </span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              {t('projectEndDate')}
+            </span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+          </label>
           <input
             type="number"
             value={reminderDays}
@@ -2107,6 +2357,28 @@ export default function ProjectDetailClient({
             rows={2}
             className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
           />
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-gray-500">{t('projectContact')}</span>
+            <select
+              value={contactUserId}
+              onChange={(e) => setContactUserId(e.target.value)}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            >
+              <option value="">{t('projectContactNone')}</option>
+              {memberCandidates.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.roleName}
+                </option>
+              ))}
+              {project.members
+                .filter((m) => !memberCandidates.some((c) => c.id === m.userId))
+                .map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.user?.roleName || m.userId}
+                  </option>
+                ))}
+            </select>
+          </label>
           <div>
             <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
             <div className="flex flex-wrap gap-2">
@@ -2138,9 +2410,11 @@ export default function ProjectDetailClient({
                 const a = await updateProject(project.id, {
                   title,
                   status: status as any,
+                  startDate: startDate || null,
                   endDate: endDate || null,
                   reminderDays: Number(reminderDays) || 15,
                   note,
+                  contactUserId: contactUserId || null,
                 })
                 if (!a.success) return a
                 return setProjectMembers(project.id, memberIds)

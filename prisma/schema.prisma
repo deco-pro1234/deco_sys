@@ -48,6 +48,7 @@ model User {
   recurringInstances RecurringInstance[] @relation("UserRecurringInstances")
   whatsappBindings   WhatsAppBinding[]   @relation("UserWhatsAppBindings")
   projectsOwned      Project[]           @relation("UserOwnedProjects")
+  projectsContact    Project[]           @relation("UserProjectContact")
   projectMemberships ProjectMember[]     @relation("UserProjectMemberships")
   projectTasksAssigned ProjectTask[]     @relation("UserAssignedProjectTasks")
   projectTaskAssignees ProjectTaskAssignee[] @relation("UserProjectTaskAssignees")
@@ -517,6 +518,10 @@ model Project {
   ownerId String
   owner   User   @relation("UserOwnedProjects", fields: [ownerId], references: [id])
 
+  /** Project contact person — members can view their phone/email. */
+  contactUserId String?
+  contactUser   User?   @relation("UserProjectContact", fields: [contactUserId], references: [id])
+
   members  ProjectMember[]
   tasks    ProjectTask[]
   sections ProjectSection[]
@@ -527,6 +532,7 @@ model Project {
   memos       Memo[]       @relation("ProjectMemos")
 
   @@index([status, endDate])
+  @@index([contactUserId])
 }
 
 model ProjectMember {
