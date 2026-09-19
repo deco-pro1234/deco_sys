@@ -537,7 +537,8 @@ model Project {
 
 model ProjectMember {
   id        String   @id @default(uuid())
-  role      String   @default("MEMBER") // OWNER | MEMBER
+  /** OWNER | MANAGER | MEMBER */
+  role      String   @default("MEMBER")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
