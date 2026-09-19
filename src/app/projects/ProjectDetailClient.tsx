@@ -393,8 +393,13 @@ export default function ProjectDetailClient({
           ) : null}
         </div>
         <div className="mt-1 text-xs text-gray-500">
-          {projectStatusLabel(project.status)} · {t('projectOwner')}:{' '}
-          {project.owner?.roleName || '—'}
+          {projectStatusLabel(project.status)}
+          {isFullMember ? (
+            <>
+              {' '}
+              · {t('projectOwner')}: {project.owner?.roleName || '—'}
+            </>
+          ) : null}
         </div>
         {isFullMember ? (
           <>
@@ -424,11 +429,12 @@ export default function ProjectDetailClient({
           </>
         ) : (
           <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
-            {t('projectTempAccessHint')}
+            {t('projectTempGuestHint')}
           </p>
         )}
       </div>
 
+      {tabs.length > 1 ? (
       <div className="flex gap-2 overflow-x-auto">
         {tabs.map(([key, label]) => (
           <button
@@ -443,6 +449,7 @@ export default function ProjectDetailClient({
           </button>
         ))}
       </div>
+      ) : null}
 
       {activeTab === 'tasks' ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">

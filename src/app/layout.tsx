@@ -78,9 +78,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       pendingCount = 0
     }
   }
+
+  const projectTemp = isProjectTempAccount(session)
+
   if (session) {
     try {
-      const projectTemp = isProjectTempAccount(session)
       const [contracts, activities, recurring, projects] = await Promise.all([
         !projectTemp && pluginFlags.contracts
           ? getContractReminderItems()
@@ -91,7 +93,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         !projectTemp && pluginFlags.recurring
           ? getRecurringReminderItems()
           : Promise.resolve([] as ReminderItem[]),
-        pluginFlags.projects
+        !projectTemp && pluginFlags.projects
           ? getProjectReminderItems()
           : Promise.resolve([] as ReminderItem[]),
       ])
@@ -118,6 +120,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       }
     }
   }
+
   return (
     <html
       lang={locale}
@@ -138,7 +141,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             />
           </div>
         )}
-        {session && (
+        {session && !projectTemp ? (
           <ReminderOverview
             locale={locale}
             contracts={reminderOverview.contracts}
@@ -146,8 +149,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             recurring={reminderOverview.recurring}
             projects={reminderOverview.projects}
           />
-        )}
-        <div className="flex-1 max-w-4xl mx-auto w-full px-4 pb-10 mobile-safe-pb sm:px-0 sm:pb-10">
+        ) : null}
+        <div
+          className={`flex-1 max-w-4xl mx-auto w-full px-4 sm:px-0 sm:pb-10 ${
+            projectTemp ? 'pb-8' : 'pb-10 mobile-safe-pb'
+          }`}
+        >
           {children}
         </div>
       </body>

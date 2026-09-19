@@ -27,9 +27,10 @@ export default async function ProjectsPage() {
   }
 
   const locale = await getCurrentLocale()
+  const projectTemp = isProjectTempAccount(session)
   const [projects, candidates] = await Promise.all([
     getProjects(),
-    session.isAdmin ? getProjectMemberCandidates() : Promise.resolve([]),
+    session.isAdmin && !projectTemp ? getProjectMemberCandidates() : Promise.resolve([]),
   ])
 
   return (
@@ -38,6 +39,7 @@ export default async function ProjectsPage() {
         locale={locale}
         currentUserId={session.userId}
         isAdmin={session.isAdmin}
+        isProjectTemp={projectTemp}
         initialProjects={toClientJSON(projects)}
         memberCandidates={toClientJSON(candidates)}
       />

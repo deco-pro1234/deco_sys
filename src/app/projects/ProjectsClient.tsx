@@ -26,6 +26,7 @@ type Props = {
   locale: Locale
   currentUserId: string
   isAdmin: boolean
+  isProjectTemp?: boolean
   initialProjects: ProjectListItem[]
   memberCandidates: Candidate[]
 }
@@ -42,6 +43,7 @@ function dayLabel(value?: string | Date | null) {
 export default function ProjectsClient({
   locale,
   isAdmin,
+  isProjectTemp = false,
   initialProjects,
   memberCandidates,
 }: Props) {
@@ -100,11 +102,15 @@ export default function ProjectsClient({
   return (
     <div className="mx-auto max-w-4xl space-y-4 px-0 py-4 sm:px-0">
       <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-bold text-gray-900">{t('projectsPage')}</h1>
-        <p className="mt-1 text-sm text-gray-500">{t('projectsPageHint')}</p>
+        <h1 className="text-xl font-bold text-gray-900">
+          {isProjectTemp ? t('projectTempMyTasks') : t('projectsPage')}
+        </h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {isProjectTemp ? t('projectsPageTempHint') : t('projectsPageHint')}
+        </p>
       </div>
 
-      {isAdmin ? (
+      {!isProjectTemp && isAdmin ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-gray-800">{t('createProject')}</h2>
           <input
@@ -169,12 +175,13 @@ export default function ProjectsClient({
             {submitting ? t('saving') : t('createProject')}
           </button>
         </div>
-      ) : (
+      ) : !isProjectTemp ? (
         <div className="rounded-2xl bg-white px-4 py-3 text-sm text-gray-500 shadow-sm">
           {t('projectCreateAdminOnly')}
         </div>
-      )}
+      ) : null}
 
+      {!isProjectTemp ? (
       <div className="flex gap-2 overflow-x-auto pb-1">
         {(['ALL', ...STATUS_KEYS] as const).map((s) => (
           <button
@@ -189,6 +196,7 @@ export default function ProjectsClient({
           </button>
         ))}
       </div>
+      ) : null}
 
       <div className="space-y-3">
         {filtered.length === 0 ? (
@@ -215,14 +223,16 @@ export default function ProjectsClient({
                     ) : null}
                   </div>
                   <div className="mt-1 text-xs text-gray-500">
-                    {t('projectOwner')}: {project.owner?.roleName || '—'} · {t('projectEndDate')}:{' '}
-                    {dayLabel(project.endDate)}
+                    {isProjectTemp
+                      ? `${t('projectTasks')}: ${project._count?.tasks ?? 0}`
+                      : `${t('projectOwner')}: ${project.owner?.roleName || '—'} · ${t('projectEndDate')}: ${dayLabel(project.endDate)}`}
                   </div>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#F2F2F7] px-2.5 py-1 text-[11px] font-semibold text-gray-600">
                   {statusLabel(project.status)}
                 </span>
               </div>
+              {!isProjectTemp ? (
               <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
                   <div className="text-gray-400">{t('projectTasks')}</div>
@@ -247,6 +257,7 @@ export default function ProjectsClient({
                   </div>
                 </div>
               </div>
+              ) : null}
             </Link>
           ))
         )}
