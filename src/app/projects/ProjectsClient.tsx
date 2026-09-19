@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { createProject } from '../actions/project'
+import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
 
 type ProjectListItem = {
   id: string
@@ -174,6 +175,7 @@ export default function ProjectsClient({
           >
             {submitting ? t('saving') : t('createProject')}
           </button>
+          <AiProjectFrameworkPanel locale={locale} memberIds={memberIds} />
         </div>
       ) : !isProjectTemp ? (
         <div className="rounded-2xl bg-white px-4 py-3 text-sm text-gray-500 shadow-sm">
