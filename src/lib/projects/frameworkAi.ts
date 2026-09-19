@@ -31,11 +31,14 @@ function buildUserPrompt(description: string) {
 export function mockFrameworkFromDescription(description: string): FrameworkDraft {
   const text = description.trim()
   const firstLine = text.split(/[\n。！？.!?]/)[0]?.trim() || '未命名項目'
-  const title = firstLine.slice(0, FRAMEWORK_LIMITS.maxTitleLen)
-
   const hasTent = /帳篷|搭棚|搭建/.test(text)
   const hasSubcon = /分判|外判|承包|委託/.test(text)
   const hasEvent = /啤酒節|市集|展覽|活動|街市/.test(text)
+
+  const eventTitle =
+    text.match(/[\u4e00-\u9fffA-Za-z0-9]{2,40}(?:啤酒節|市集|展覽|活動)/)?.[0] ||
+    text.match(/[^，,。．\n]{2,24}/)?.[0]
+  const title = (eventTitle || firstLine).slice(0, 40)
 
   const sections: FrameworkDraft['sections'] = []
 
