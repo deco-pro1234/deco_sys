@@ -75,7 +75,7 @@ const contactUserSelect = {
 
 const taskDetailInclude = {
   createdBy: { select: { id: true, roleName: true } },
-  assignee: { select: { id: true, roleName: true } },
+  assignee: { select: contactUserSelect },
   assignees: {
     include: { user: { select: contactUserSelect } },
     orderBy: { createdAt: 'asc' as const },
@@ -593,6 +593,85 @@ export async function getProjectDetail(projectId: string) {
       }
     }
 
+    // Task assignees may see fellow members on their matters (including other temps).
+    const assignedSectionIds = new Set<string | null>()
+    for (const task of project.tasks) {
+      const assigneeIds =
+        task.assignees && task.assignees.length > 0
+          ? task.assignees.map((a) => a.userId)
+          : task.assigneeId
+            ? [task.assigneeId]
+            : []
+      if (!assigneeIds.includes(ctx.session.userId)) continue
+      assignedSectionIds.add(task.sectionId || null)
+      if (task.section?.parentId) {
+        // Parent root grant also covers this child-section task
+        assignedSectionIds.add(task.section.parentId)
+      }
+    }
+
+    let sectionAccesses: Array<{
+      id: string
+      userId: string
+      sectionId: string | null
+      scopeKey: string
+      canAddMemo: boolean
+      expiresAt: Date | null
+      user: {
+        id: string
+        roleName: string | null
+        email: string | null
+        loginPhone: string | null
+        accountKind: string
+        profile: {
+          contactPhone: string | null
+          contactEmail: string | null
+          jobTitle: string | null
+          department: string | null
+        } | null
+      } | null
+      section: {
+        id: string
+        title: string
+        parentId: string | null
+        parent: { id: string; title: string } | null
+      } | null
+    }> = []
+    if (assignedSectionIds.size > 0) {
+      const orFilters: Array<{
+        sectionId?: string | null
+        scopeKey?: string
+      }> = []
+      for (const sid of assignedSectionIds) {
+        if (sid) orFilters.push({ sectionId: sid })
+        else {
+          orFilters.push({ sectionId: null })
+          orFilters.push({ scopeKey: UNCATEGORIZED_SCOPE_KEY })
+        }
+      }
+      sectionAccesses = await prisma.projectSectionAccess.findMany({
+        where: {
+          projectId,
+          AND: [
+            { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+            { OR: orFilters },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          user: { select: contactUserSelect },
+          section: {
+            select: {
+              id: true,
+              title: true,
+              parentId: true,
+              parent: { select: { id: true, title: true } },
+            },
+          },
+        },
+      })
+    }
+
     return {
       ...project,
       members: [],
@@ -600,7 +679,7 @@ export async function getProjectDetail(projectId: string) {
       memos: [],
       attachments: [],
       taskAccesses: [],
-      sectionAccesses: [],
+      sectionAccesses,
       accessMode: 'temp' as const,
       canManageTempAccess: false,
       canManageProject: false,

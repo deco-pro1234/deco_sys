@@ -91,7 +91,7 @@ type ProjectTask = {
   sectionId?: string | null
   section?: { id: string; title: string; parentId?: string | null } | null
   assigneeId?: string | null
-  assignee?: { id?: string; roleName?: string | null } | null
+  assignee?: ContactUser | null
   assignees?: Array<{
     userId: string
     user?: ContactUser | null
@@ -238,11 +238,91 @@ function getTaskAssigneeIds(task: ProjectTask) {
   return task.assigneeId ? [task.assigneeId] : []
 }
 
-function taskAssigneeNames(task: ProjectTask) {
+function taskAssigneeContacts(task: ProjectTask): ContactUser[] {
   if (task.assignees && task.assignees.length > 0) {
-    return task.assignees.map((a) => a.user?.roleName || a.userId).join(', ')
+    return task.assignees
+      .map((a) => a.user)
+      .filter((u): u is ContactUser => Boolean(u?.id))
   }
-  return task.assignee?.roleName || ''
+  if (task.assignee?.id) return [task.assignee]
+  return []
+}
+
+function taskAssigneeNames(task: ProjectTask) {
+  const contacts = taskAssigneeContacts(task)
+  if (contacts.length > 0) {
+    return contacts.map((u) => u.roleName || u.id).join(', ')
+  }
+  return ''
+}
+
+function isTaskAssignee(task: ProjectTask, userId: string) {
+  return getTaskAssigneeIds(task).includes(userId)
+}
+
+function isSectionAccessActive(expiresAt?: string | Date | null) {
+  if (!expiresAt) return true
+  const d = new Date(expiresAt)
+  if (Number.isNaN(d.getTime())) return true
+  return d.getTime() > Date.now()
+}
+
+/** Temp users whose section grant covers this task (parent root covers children). */
+function taskSectionTempContacts(
+  task: ProjectTask,
+  sectionAccesses: SectionAccessRow[] | undefined,
+  rootSections: ProjectSection[]
+): ContactUser[] {
+  const taskSectionId = task.sectionId || null
+  const childParent = new Map<string, string>()
+  for (const root of rootSections) {
+    for (const child of root.children || []) {
+      childParent.set(child.id, root.id)
+    }
+  }
+
+  const map = new Map<string, ContactUser>()
+  for (const grant of sectionAccesses || []) {
+    if (!isSectionAccessActive(grant.expiresAt)) continue
+    const user = grant.user
+    if (!user?.id) continue
+
+    const grantSectionId = grant.sectionId || null
+    let covers = false
+    if (!grantSectionId) {
+      covers = taskSectionId === null
+    } else if (grantSectionId === taskSectionId) {
+      covers = true
+    } else if (taskSectionId && childParent.get(taskSectionId) === grantSectionId) {
+      // Root-level grant covers tasks in child sections
+      covers = true
+    }
+
+    if (covers && !map.has(user.id)) map.set(user.id, user)
+  }
+  return Array.from(map.values())
+}
+
+/**
+ * Everyone sees assignees. Task assignees additionally see all members on the
+ * matter (co-assignees + temp users with access to this task's section).
+ */
+function taskVisibleContacts(
+  task: ProjectTask,
+  viewerId: string,
+  sectionAccesses: SectionAccessRow[] | undefined,
+  rootSections: ProjectSection[]
+): ContactUser[] {
+  const map = new Map<string, ContactUser>()
+  for (const c of taskAssigneeContacts(task)) {
+    if (c.id) map.set(c.id, c)
+  }
+  if (isTaskAssignee(task, viewerId)) {
+    for (const c of taskSectionTempContacts(task, sectionAccesses, rootSections)) {
+      if (!map.has(c.id)) map.set(c.id, c)
+    }
+  }
+  return Array.from(map.values())
 }
 
 export default function ProjectDetailClient({
@@ -522,8 +602,86 @@ export default function ProjectDetailClient({
     return digits ? `https://wa.me/${digits}` : null
   }
 
+  const renderPhoneWhatsApp = (user?: ContactUser | null, opts?: { compact?: boolean }) => {
+    const phone = contactPhoneOf(user)
+    const waHref = whatsappHrefOf(phone)
+    if (!phone && !waHref) {
+      return (
+        <span className="text-gray-400">
+          {opts?.compact ? '—' : t('projectContactNoPhone')}
+        </span>
+      )
+    }
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        {phone ? <span className="text-gray-700">{phone}</span> : null}
+        {waHref ? (
+          <a
+            href={waHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center rounded-lg bg-[#25D366] px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm hover:bg-[#1EBE57]"
+            title={t('projectContactWhatsAppOpen')}
+          >
+            {t('projectContactWhatsApp')}
+          </a>
+        ) : null}
+      </span>
+    )
+  }
+
+  const visibleContactsForTask = (task: ProjectTask) =>
+    taskVisibleContacts(task, currentUserId, project.sectionAccesses, rootSections)
+
+  const renderTaskMemberContacts = (task: ProjectTask) => {
+    const assigneeIds = new Set(getTaskAssigneeIds(task))
+    const contacts = visibleContactsForTask(task)
+    const viewerIsAssignee = isTaskAssignee(task, currentUserId)
+    if (contacts.length === 0) {
+      return (
+        <div className="text-xs text-gray-400">{t('projectTaskNoAssignees')}</div>
+      )
+    }
+    return (
+      <div className="space-y-1.5">
+        {viewerIsAssignee ? (
+          <p className="text-[11px] text-gray-500">{t('projectTaskMembersHint')}</p>
+        ) : null}
+        {contacts.map((c) => (
+          <div
+            key={c.id}
+            className="flex flex-col gap-1 rounded-xl bg-white px-3 py-2 text-xs shadow-sm sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-medium text-gray-900">
+                {c.roleName || '—'}
+                {assigneeIds.has(c.id) ? (
+                  <span className="ml-2 text-[10px] font-semibold text-indigo-600">
+                    {t('projectTaskAssignees')}
+                  </span>
+                ) : null}
+                {c.accountKind === 'PROJECT_TEMP' ? (
+                  <span className="ml-2 text-[10px] text-amber-700">
+                    {t('projectTempAccessBadge')}
+                  </span>
+                ) : null}
+              </div>
+              {c.profile?.jobTitle ? (
+                <div className="text-[11px] text-gray-500">
+                  {t('projectContactRole')}：{c.profile.jobTitle}
+                </div>
+              ) : null}
+            </div>
+            <div className="shrink-0">{renderPhoneWhatsApp(c)}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   const sectionContactGroups = useMemo(() => {
-    const roots = project.sections || []
+    const roots = rootSections
     const groups: Array<{
       key: string
       title: string
@@ -545,6 +703,7 @@ export default function ProjectDetailClient({
         for (const a of task.assignees || []) pushUnique(map, a.user)
       }
       for (const grant of project.sectionAccesses || []) {
+        if (!isSectionAccessActive(grant.expiresAt)) continue
         const sid = grant.sectionId || null
         if (sid === root.id || (sid && childIds.has(sid))) {
           pushUnique(map, grant.user)
@@ -562,6 +721,7 @@ export default function ProjectDetailClient({
           for (const a of task.assignees || []) pushUnique(childMap, a.user)
         }
         for (const grant of project.sectionAccesses || []) {
+          if (!isSectionAccessActive(grant.expiresAt)) continue
           if (grant.sectionId === child.id) pushUnique(childMap, grant.user)
         }
         groups.push({
@@ -578,6 +738,7 @@ export default function ProjectDetailClient({
       for (const a of task.assignees || []) pushUnique(uncat, a.user)
     }
     for (const grant of project.sectionAccesses || []) {
+      if (!isSectionAccessActive(grant.expiresAt)) continue
       if (!grant.sectionId) pushUnique(uncat, grant.user)
     }
     if (uncat.size > 0) {
@@ -588,7 +749,7 @@ export default function ProjectDetailClient({
       })
     }
     return groups
-  }, [project.sections, project.tasks, project.sectionAccesses, t])
+  }, [rootSections, project.tasks, project.sectionAccesses, t])
 
   const summary = useMemo(() => {
     const income = (project.ledger || [])
@@ -1387,6 +1548,8 @@ export default function ProjectDetailClient({
 
                 const expanded = expandedTaskId === task.id
                 const names = taskAssigneeNames(task)
+                const memberContacts = visibleContactsForTask(task)
+                const viewerIsAssignee = isTaskAssignee(task, currentUserId)
                 const canMemo = canAddMemoForTask(task.id)
                 return (
                   <div key={task.id} className="py-3">
@@ -1443,6 +1606,21 @@ export default function ProjectDetailClient({
                                 ? ` · ${t('projectTempAccessReadOnly')}`
                                 : ''}
                             </div>
+                            {memberContacts.length > 0 ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {memberContacts.map((c) => (
+                                  <div
+                                    key={c.id}
+                                    className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] text-gray-700"
+                                  >
+                                    <span className="font-medium text-gray-900">
+                                      {c.roleName || '—'}
+                                    </span>
+                                    {renderPhoneWhatsApp(c, { compact: true })}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </button>
@@ -1505,10 +1683,18 @@ export default function ProjectDetailClient({
 
                     {expanded ? (
                       <div className="mt-3 space-y-3 rounded-2xl bg-[#F8FAFC] p-3">
+                        <div>
+                          <div className="mb-2 text-xs font-medium text-gray-500">
+                            {viewerIsAssignee
+                              ? t('projectTaskMembers')
+                              : t('projectTaskAssignees')}
+                          </div>
+                          {renderTaskMemberContacts(task)}
+                        </div>
                         {isFullMember ? (
                           <div>
                             <div className="mb-2 text-xs font-medium text-gray-500">
-                              {t('projectTaskAssignees')}
+                              {t('projectTaskAssigneesEdit')}
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {project.members.map((m) => {
@@ -2557,13 +2743,14 @@ export default function ProjectDetailClient({
             <h2 className="text-sm font-semibold text-gray-900">{t('projectOwner')}</h2>
             <div className="mt-2 rounded-2xl border border-gray-100 p-4 text-sm">
               <div className="font-semibold text-gray-900">{project.owner?.roleName || '—'}</div>
-              <div className="mt-2 space-y-1 text-xs text-gray-600">
-                <div>
-                  {t('projectContactPhone')}: {contactPhoneOf(project.owner) || '—'}
+              {project.owner?.profile?.jobTitle ? (
+                <div className="mt-1 text-xs text-gray-500">
+                  {t('projectContactRole')}：{project.owner.profile.jobTitle}
                 </div>
-                <div>
-                  {t('projectContactEmail')}: {contactEmailOf(project.owner) || '—'}
-                </div>
+              ) : null}
+              <div className="mt-2 text-xs text-gray-600">
+                <span className="text-gray-400">{t('projectContactPhone')}：</span>
+                <span className="ml-1">{renderPhoneWhatsApp(project.owner)}</span>
               </div>
             </div>
           </div>
@@ -2585,20 +2772,24 @@ export default function ProjectDetailClient({
                         {group.contacts.map((c) => (
                           <div
                             key={c.id}
-                            className="flex flex-col gap-0.5 rounded-xl bg-[#FAFAFA] px-3 py-2 text-xs text-gray-700 sm:flex-row sm:items-center sm:justify-between"
+                            className="flex flex-col gap-1 rounded-xl bg-[#FAFAFA] px-3 py-2 text-xs text-gray-700 sm:flex-row sm:items-center sm:justify-between"
                           >
-                            <div className="font-medium text-gray-900">
-                              {c.roleName || '—'}
-                              {c.accountKind === 'PROJECT_TEMP' ? (
-                                <span className="ml-2 text-[10px] text-amber-700">
-                                  {t('projectTempAccessBadge')}
-                                </span>
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">
+                                {c.roleName || '—'}
+                                {c.accountKind === 'PROJECT_TEMP' ? (
+                                  <span className="ml-2 text-[10px] text-amber-700">
+                                    {t('projectTempAccessBadge')}
+                                  </span>
+                                ) : null}
+                              </div>
+                              {c.profile?.jobTitle ? (
+                                <div className="text-[11px] text-gray-500">
+                                  {t('projectContactRole')}：{c.profile.jobTitle}
+                                </div>
                               ) : null}
                             </div>
-                            <div className="text-gray-500">
-                              {[contactPhoneOf(c), contactEmailOf(c)].filter(Boolean).join(' · ') ||
-                                '—'}
-                            </div>
+                            <div className="shrink-0">{renderPhoneWhatsApp(c)}</div>
                           </div>
                         ))}
                       </div>
