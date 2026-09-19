@@ -7,6 +7,7 @@ import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { createProject } from '../actions/project'
 import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
 import type { ProjectCompletionStats } from '@/lib/projects/completion'
+import type { ReminderItem, ReminderKind } from '../actions/reminder'
 
 type ProjectListItem = {
   id: string
@@ -33,9 +34,11 @@ type Props = {
   isProjectTemp?: boolean
   initialProjects: ProjectListItem[]
   memberCandidates: Candidate[]
+  initialReminders?: ReminderItem[]
 }
 
 const STATUS_KEYS = ['PLANNING', 'ACTIVE', 'DONE', 'ARCHIVED'] as const
+const REMINDER_PREVIEW = 5
 
 function dayLabel(value?: string | Date | null) {
   if (!value) return '—'
@@ -44,12 +47,28 @@ function dayLabel(value?: string | Date | null) {
   return d.toISOString().slice(0, 10)
 }
 
+function kindLabel(kind: ReminderKind | undefined, t: (key: any) => string) {
+  switch (kind) {
+    case 'project_start':
+      return t('reminderKindProjectStart')
+    case 'project_end':
+      return t('reminderKindProjectEnd')
+    case 'project_task_start':
+      return t('reminderKindTaskStart')
+    case 'project_task_due':
+      return t('reminderKindTaskDue')
+    default:
+      return null
+  }
+}
+
 export default function ProjectsClient({
   locale,
   isAdmin,
   isProjectTemp = false,
   initialProjects,
   memberCandidates,
+  initialReminders = [],
 }: Props) {
   const t = createTranslator(locale)
   const router = useRouter()
@@ -61,11 +80,32 @@ export default function ProjectsClient({
   const [contactUserId, setContactUserId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'ALL' | (typeof STATUS_KEYS)[number]>('ALL')
+  const [remindersExpanded, setRemindersExpanded] = useState(false)
+  const [reminderBucketFilter, setReminderBucketFilter] = useState<
+    'ALL' | 'overdue' | 'today' | 'upcoming'
+  >('ALL')
 
   const filtered = useMemo(() => {
     if (filter === 'ALL') return initialProjects
     return initialProjects.filter((p) => p.status === filter)
   }, [filter, initialProjects])
+
+  const reminderGroups = useMemo(() => {
+    return {
+      overdue: initialReminders.filter((r) => r.bucket === 'overdue'),
+      today: initialReminders.filter((r) => r.bucket === 'today'),
+      upcoming: initialReminders.filter((r) => r.bucket === 'upcoming'),
+    }
+  }, [initialReminders])
+
+  const filteredReminders = useMemo(() => {
+    if (reminderBucketFilter === 'ALL') return initialReminders
+    return initialReminders.filter((r) => r.bucket === reminderBucketFilter)
+  }, [initialReminders, reminderBucketFilter])
+
+  const visibleReminders = remindersExpanded
+    ? filteredReminders
+    : filteredReminders.slice(0, REMINDER_PREVIEW)
 
   const statusLabel = (s: string) => {
     const map: Record<string, string> = {
@@ -106,6 +146,16 @@ export default function ProjectsClient({
     if (res.id) router.push(`/projects/${res.id}`)
   }
 
+  const formatReminderBadge = (item: ReminderItem) => {
+    if (item.bucket === 'overdue') {
+      return locale === 'en'
+        ? `${Math.abs(item.daysDiff)} days overdue`
+        : `已逾期 ${Math.abs(item.daysDiff)} 天`
+    }
+    if (item.bucket === 'today') return t('reminderToday')
+    return locale === 'en' ? `${item.daysDiff} days left` : `尚餘 ${item.daysDiff} 天`
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-4 px-0 py-4 sm:px-0">
       <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
@@ -116,6 +166,92 @@ export default function ProjectsClient({
           {isProjectTemp ? t('projectsPageTempHint') : t('projectsPageHint')}
         </p>
       </div>
+
+      {initialReminders.length > 0 ? (
+        <section className="rounded-2xl border border-[#FF9500]/20 bg-[#FFF7ED] px-4 py-4 shadow-sm sm:rounded-3xl sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-[#9A3412]">{t('projectReminders')}</h2>
+              <p className="mt-1 text-sm text-[#C2410C]">{t('projectRemindersHint')}</p>
+            </div>
+            <span className="rounded-full bg-[#FF9500]/15 px-2.5 py-1 text-xs font-bold text-[#C2410C]">
+              {initialReminders.length}
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {(
+              [
+                ['ALL', t('all'), initialReminders.length],
+                ['overdue', t('reminderOverdue'), reminderGroups.overdue.length],
+                ['today', t('reminderToday'), reminderGroups.today.length],
+                ['upcoming', t('reminderUpcoming'), reminderGroups.upcoming.length],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setReminderBucketFilter(key)
+                  setRemindersExpanded(false)
+                }}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                  reminderBucketFilter === key
+                    ? 'bg-[#9A3412] text-white'
+                    : 'bg-white/80 text-[#9A3412]'
+                }`}
+              >
+                {label} {count}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {visibleReminders.map((item) => {
+              const kind = kindLabel(item.kind, t)
+              return (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className="flex flex-col gap-1 rounded-xl bg-white/90 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-white sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {kind ? (
+                        <span className="rounded-md bg-[#FFF7ED] px-1.5 py-0.5 text-[10px] font-semibold text-[#9A3412]">
+                          {kind}
+                        </span>
+                      ) : null}
+                      <span className="font-medium text-gray-900">{item.title}</span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-gray-500">
+                      {dayLabel(item.targetDate)}
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-[#FFF7ED] px-2 py-0.5 text-xs font-medium text-[#C2410C]">
+                    {formatReminderBadge(item)}
+                  </span>
+                </Link>
+              )
+            })}
+          </div>
+
+          {filteredReminders.length > REMINDER_PREVIEW ? (
+            <button
+              type="button"
+              onClick={() => setRemindersExpanded((v) => !v)}
+              className="mt-3 w-full rounded-xl bg-white/80 py-2 text-xs font-semibold text-[#9A3412]"
+            >
+              {remindersExpanded
+                ? t('reminderCollapse')
+                : t('reminderShowMore').replace(
+                    '{{count}}',
+                    String(filteredReminders.length - REMINDER_PREVIEW)
+                  )}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       {!isProjectTemp && isAdmin ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">

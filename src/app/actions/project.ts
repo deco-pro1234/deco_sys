@@ -1630,6 +1630,7 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
       select: {
         id: true,
         title: true,
+        startDate: true,
         endDate: true,
         reminderDays: true,
         ownerId: true,
@@ -1638,10 +1639,14 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
           select: { userId: true },
         },
         tasks: {
-          where: { status: { not: 'DONE' }, dueDate: { not: null } },
+          where: {
+            status: { not: 'DONE' },
+            OR: [{ dueDate: { not: null } }, { startAt: { not: null } }],
+          },
           select: {
             id: true,
             title: true,
+            startAt: true,
             dueDate: true,
             reminderDays: true,
           },
@@ -1662,37 +1667,77 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
           : (await listActiveTaskGrants(project.id, session.userId)).map((g) => g.taskId)
       )
 
+      if (isFull && project.startDate) {
+        const daysDiff = getDaysDiff(project.startDate)
+        const bucket = getReminderBucket(daysDiff, project.reminderDays)
+        if (bucket) {
+          items.push({
+            id: `project-${project.id}-start`,
+            title: project.title,
+            targetDate: project.startDate.toISOString(),
+            bucket,
+            daysDiff,
+            reminderDays: project.reminderDays,
+            href: `/projects/${project.id}`,
+            kind: 'project_start',
+          })
+        }
+      }
+
       if (isFull && project.endDate) {
         const daysDiff = getDaysDiff(project.endDate)
         const bucket = getReminderBucket(daysDiff, project.reminderDays)
         if (bucket) {
           items.push({
-            id: `project-${project.id}`,
+            id: `project-${project.id}-end`,
             title: project.title,
             targetDate: project.endDate.toISOString(),
             bucket,
             daysDiff,
             reminderDays: project.reminderDays,
             href: `/projects/${project.id}`,
+            kind: 'project_end',
           })
         }
       }
 
       for (const task of project.tasks) {
-        if (!task.dueDate) continue
         if (!isFull && !grantedTaskIds.has(task.id)) continue
-        const daysDiff = getDaysDiff(task.dueDate)
-        const bucket = getReminderBucket(daysDiff, task.reminderDays)
-        if (!bucket) continue
-        items.push({
-          id: `task-${task.id}`,
-          title: `${project.title} · ${task.title}`,
-          targetDate: task.dueDate.toISOString(),
-          bucket,
-          daysDiff,
-          reminderDays: task.reminderDays,
-          href: `/projects/${project.id}`,
-        })
+        const taskTitle = `${project.title} · ${task.title}`
+
+        if (task.startAt) {
+          const daysDiff = getDaysDiff(task.startAt)
+          const bucket = getReminderBucket(daysDiff, task.reminderDays)
+          if (bucket) {
+            items.push({
+              id: `task-${task.id}-start`,
+              title: taskTitle,
+              targetDate: task.startAt.toISOString(),
+              bucket,
+              daysDiff,
+              reminderDays: task.reminderDays,
+              href: `/projects/${project.id}`,
+              kind: 'project_task_start',
+            })
+          }
+        }
+
+        if (task.dueDate) {
+          const daysDiff = getDaysDiff(task.dueDate)
+          const bucket = getReminderBucket(daysDiff, task.reminderDays)
+          if (bucket) {
+            items.push({
+              id: `task-${task.id}-due`,
+              title: taskTitle,
+              targetDate: task.dueDate.toISOString(),
+              bucket,
+              daysDiff,
+              reminderDays: task.reminderDays,
+              href: `/projects/${project.id}`,
+              kind: 'project_task_due',
+            })
+          }
+        }
       }
     }
 
