@@ -227,6 +227,7 @@ model Attachment {
   activityId String?
   projectId String?
   projectTaskId String?
+  projectSectionId String?
   memoId String?
   payrollPaidId String? @unique
   payrollPdfId  String? @unique
@@ -241,10 +242,14 @@ model Attachment {
   activity      Activity?     @relation("ActivityAttachments", fields: [activityId], references: [id])
   project       Project?      @relation("ProjectAttachments", fields: [projectId], references: [id])
   projectTask   ProjectTask?  @relation("ProjectTaskAttachments", fields: [projectTaskId], references: [id])
+  projectSection ProjectSection? @relation("ProjectSectionAttachments", fields: [projectSectionId], references: [id], onDelete: Cascade)
   memo          Memo?         @relation("MemoAttachments", fields: [memoId], references: [id])
   payrollPaid   Payroll?      @relation("PaidReceiptAttachments", fields: [payrollPaidId], references: [id])
   payrollPdf    Payroll?      @relation("PdfPayrollAttachments", fields: [payrollPdfId], references: [id])
   recurringInstance RecurringInstance? @relation("RecurringInstanceAttachments", fields: [recurringInstanceId], references: [id])
+
+  @@index([projectSectionId])
+  @@index([projectTaskId])
 }
 
 model Memo {
@@ -535,11 +540,13 @@ model ProjectMember {
 
 /** Up to 2 levels under a project: root section → child section → tasks. */
 model ProjectSection {
-  id        String   @id @default(uuid())
-  title     String
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  title       String
+  /** Optional folder-level description for members / future PDF cover. */
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   projectId String
   parentId  String?
@@ -548,6 +555,7 @@ model ProjectSection {
   parent   ProjectSection? @relation("ProjectSectionTree", fields: [parentId], references: [id], onDelete: Cascade)
   children ProjectSection[] @relation("ProjectSectionTree")
   tasks    ProjectTask[]
+  attachments Attachment[] @relation("ProjectSectionAttachments")
 
   @@index([projectId, parentId, sortOrder])
 }
@@ -555,9 +563,12 @@ model ProjectSection {
 model ProjectTask {
   id           String   @id @default(uuid())
   title        String
+  /** Body / details for the task (distinct from memo timeline). */
+  content      String?
   status       String   @default("TODO") // TODO | DOING | DONE
   dueDate      DateTime?
   reminderDays Int      @default(7)
+  /** @deprecated prefer content; kept for migration compatibility */
   note         String?
   sortOrder    Int      @default(0)
   createdAt    DateTime @default(now())
