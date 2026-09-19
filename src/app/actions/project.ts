@@ -776,6 +776,74 @@ export async function getProjectMemberCandidates(projectId?: string) {
   })
 }
 
+/** Search standard users to add as project members (name / email / phone). */
+export async function searchProjectMemberCandidates(input: {
+  query: string
+  projectId?: string
+  excludeIds?: string[]
+  limit?: number
+}): Promise<{
+  success: boolean
+  error?: string
+  users?: Array<{
+    id: string
+    roleName: string
+    email: string
+    loginPhone: string | null
+    isAdmin: boolean
+    accountKind: string
+  }>
+}> {
+  try {
+    const session = await requireSession()
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    await assertProjectsEnabled()
+
+    if (!session.isAdmin) {
+      if (!input.projectId) {
+        return { success: false, error: t('adminPermissionRequired') }
+      }
+      await assertCanManageProject(input.projectId)
+    }
+
+    const query = String(input.query || '').trim()
+    if (query.length < 1) {
+      return { success: true, users: [] }
+    }
+
+    const limit = Math.min(Math.max(Number(input.limit) || 12, 1), 30)
+    const excludeIds = Array.from(new Set((input.excludeIds || []).filter(Boolean)))
+
+    const users = await prisma.user.findMany({
+      where: {
+        accountKind: ACCOUNT_KIND_STANDARD,
+        isAdmin: false,
+        ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
+        OR: [
+          { roleName: { contains: query, mode: 'insensitive' } },
+          { email: { contains: query, mode: 'insensitive' } },
+          { loginPhone: { contains: query } },
+        ],
+      },
+      orderBy: { roleName: 'asc' },
+      take: limit,
+      select: {
+        id: true,
+        roleName: true,
+        email: true,
+        loginPhone: true,
+        isAdmin: true,
+        accountKind: true,
+      },
+    })
+
+    return { success: true, users }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 export async function getProjectTempAccountCandidates(projectId: string) {
   try {
     const session = await requireSession()

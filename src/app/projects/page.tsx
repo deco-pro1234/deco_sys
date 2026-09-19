@@ -3,11 +3,7 @@ import { getSession } from '../actions/auth'
 import { getPluginFlags } from '../actions/settings'
 import { getCurrentLocale } from '@/lib/locale'
 import { isProjectTempAccount } from '@/lib/access'
-import {
-  getProjectMemberCandidates,
-  getProjectReminderItems,
-  getProjects,
-} from '../actions/project'
+import { getProjectReminderItems, getProjects } from '../actions/project'
 import ProjectsClient from './ProjectsClient'
 
 export const metadata = {
@@ -29,9 +25,8 @@ export default async function ProjectsPage() {
 
   const locale = await getCurrentLocale()
   const projectTemp = isProjectTempAccount(session)
-  const [projects, candidates, reminders] = await Promise.all([
+  const [projects, reminders] = await Promise.all([
     getProjects(),
-    session.isAdmin && !projectTemp ? getProjectMemberCandidates() : Promise.resolve([]),
     getProjectReminderItems(),
   ])
 
@@ -43,7 +38,6 @@ export default async function ProjectsPage() {
         isAdmin={session.isAdmin}
         isProjectTemp={projectTemp}
         initialProjects={toClientJSON(projects)}
-        memberCandidates={toClientJSON(candidates)}
         initialReminders={toClientJSON(reminders)}
       />
     </div>
