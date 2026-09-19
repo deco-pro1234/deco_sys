@@ -196,6 +196,7 @@ export default function ProjectDetailClient({
   const [childSectionTitle, setChildSectionTitle] = useState('')
   const [childParentId, setChildParentId] = useState('')
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+  const [childParentTouched, setChildParentTouched] = useState(false)
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
@@ -259,6 +260,17 @@ export default function ProjectDetailClient({
       }))
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
   }, [project.sections])
+
+  useEffect(() => {
+    const rootIds = new Set(rootSections.map((s) => s.id))
+    if (childParentId && !rootIds.has(childParentId)) {
+      setChildParentId('')
+      return
+    }
+    if (!childParentTouched && !childParentId && rootSections.length === 1) {
+      setChildParentId(rootSections[0].id)
+    }
+  }, [rootSections, childParentId, childParentTouched])
 
   const sectionOptions = useMemo(() => {
     const opts: Array<{ id: string; label: string }> = [
@@ -578,43 +590,53 @@ export default function ProjectDetailClient({
                   </button>
                 </div>
                 {rootSections.length > 0 ? (
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <select
-                      value={childParentId}
-                      onChange={(e) => setChildParentId(e.target.value)}
-                      className="rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                    >
-                      <option value="">{t('projectSectionAddChild')}…</option>
-                      {rootSections.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.title}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={childSectionTitle}
-                      onChange={(e) => setChildSectionTitle(e.target.value)}
-                      placeholder={t('projectSectionTitlePlaceholder')}
-                      className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || !childParentId || !childSectionTitle.trim()}
-                      onClick={async () => {
-                        const ok = await run(() =>
-                          createProjectSection(project.id, {
-                            title: childSectionTitle,
-                            parentId: childParentId,
-                          })
-                        )
-                        if (ok) {
-                          setChildSectionTitle('')
-                        }
-                      }}
-                      className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                    >
-                      {t('projectSectionAddChild')}
-                    </button>
+                  <div className="space-y-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <select
+                        value={childParentId}
+                        onChange={(e) => {
+                          setChildParentTouched(true)
+                          setChildParentId(e.target.value)
+                        }}
+                        className="rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                      >
+                        <option value="">{t('projectSectionSelectParent')}</option>
+                        {rootSections.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.title}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        value={childSectionTitle}
+                        onChange={(e) => setChildSectionTitle(e.target.value)}
+                        placeholder={t('projectSectionTitlePlaceholder')}
+                        className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || !childParentId || !childSectionTitle.trim()}
+                        onClick={async () => {
+                          const ok = await run(() =>
+                            createProjectSection(project.id, {
+                              title: childSectionTitle,
+                              parentId: childParentId,
+                            })
+                          )
+                          if (ok) {
+                            setChildSectionTitle('')
+                          }
+                        }}
+                        className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        {t('projectSectionAddChild')}
+                      </button>
+                    </div>
+                    {!childParentId && childSectionTitle.trim() ? (
+                      <div className="text-[11px] text-amber-600">
+                        {t('projectSectionChildHint')}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
