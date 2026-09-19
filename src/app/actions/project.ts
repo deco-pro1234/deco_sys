@@ -824,6 +824,18 @@ export async function searchProjectMemberCandidates(input: {
           { roleName: { contains: query, mode: 'insensitive' } },
           { email: { contains: query, mode: 'insensitive' } },
           { loginPhone: { contains: query } },
+          {
+            profile: {
+              is: {
+                OR: [
+                  { legalNameZh: { contains: query, mode: 'insensitive' } },
+                  { legalNameEn: { contains: query, mode: 'insensitive' } },
+                  { contactPhone: { contains: query } },
+                  { contactEmail: { contains: query, mode: 'insensitive' } },
+                ],
+              },
+            },
+          },
         ],
       },
       orderBy: { roleName: 'asc' },

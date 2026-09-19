@@ -38,7 +38,7 @@ export default function ProjectMemberPicker({
   allowManagerRole = false,
   disabled,
 }: Props) {
-  const t = createTranslator(locale)
+  const t = useMemo(() => createTranslator(locale), [locale])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<
     Array<{
@@ -53,13 +53,11 @@ export default function ProjectMemberPicker({
   const [error, setError] = useState('')
   const reqId = useRef(0)
 
-  const excludeIds = useMemo(() => {
+  const excludeKey = useMemo(() => {
     const ids = selected.map((m) => m.id)
     if (owner?.id) ids.push(owner.id)
-    return ids
+    return ids.slice().sort().join(',')
   }, [selected, owner?.id])
-
-  const excludeKey = excludeIds.slice().sort().join(',')
 
   useEffect(() => {
     const q = query.trim()
@@ -73,26 +71,42 @@ export default function ProjectMemberPicker({
 
     const id = ++reqId.current
     setSearching(true)
-    const timer = setTimeout(async () => {
-      const res = await searchProjectMemberCandidates({
-        query: q,
-        projectId,
-        excludeIds: excludeKey ? excludeKey.split(',') : [],
-        limit: 12,
-      })
-      if (id !== reqId.current) return
-      setSearching(false)
-      setSearched(true)
-      if (!res.success) {
-        setError(res.error || t('submitFailed'))
-        setResults([])
-        return
-      }
-      setError('')
-      setResults(res.users || [])
+    setError('')
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await searchProjectMemberCandidates({
+            query: q,
+            projectId,
+            excludeIds: excludeKey ? excludeKey.split(',') : [],
+            limit: 12,
+          })
+          if (cancelled || id !== reqId.current) return
+          setSearching(false)
+          setSearched(true)
+          if (!res.success) {
+            setError(res.error || t('submitFailed'))
+            setResults([])
+            return
+          }
+          setError('')
+          setResults(res.users || [])
+        } catch (e: unknown) {
+          if (cancelled || id !== reqId.current) return
+          setSearching(false)
+          setSearched(true)
+          setResults([])
+          setError(e instanceof Error ? e.message : t('submitFailed'))
+        }
+      })()
     }, 280)
 
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+    // `t` is memoized on locale — do not depend on an unstable translator identity.
   }, [query, projectId, excludeKey, t])
 
   const addUser = (user: {
