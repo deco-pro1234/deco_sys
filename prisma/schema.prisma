@@ -49,6 +49,8 @@ model User {
   projectTaskAssignees ProjectTaskAssignee[] @relation("UserProjectTaskAssignees")
   projectTasksCreated  ProjectTask[]     @relation("UserCreatedProjectTasks")
   projectLedgerEntries ProjectLedgerEntry[] @relation("UserProjectLedgerEntries")
+  projectTaskAccesses  ProjectTaskAccess[]  @relation("UserProjectTaskAccess")
+  projectTaskAccessesCreated ProjectTaskAccess[] @relation("UserCreatedProjectTaskAccess")
 }
 
 model Category {
@@ -500,6 +502,7 @@ model Project {
   members  ProjectMember[]
   tasks    ProjectTask[]
   ledger   ProjectLedgerEntry[]
+  taskAccesses ProjectTaskAccess[]
   attachments Attachment[] @relation("ProjectAttachments")
   memos       Memo[]       @relation("ProjectMemos")
 
@@ -545,8 +548,34 @@ model ProjectTask {
 
   attachments Attachment[] @relation("ProjectTaskAttachments")
   memos       Memo[]       @relation("ProjectTaskMemos")
+  taskAccesses ProjectTaskAccess[]
 
   @@index([projectId, status, dueDate])
+}
+
+/** Temporary (non-resident) access to specific project tasks — not a ProjectMember. */
+model ProjectTaskAccess {
+  id         String    @id @default(uuid())
+  canView    Boolean   @default(true)
+  canAddMemo Boolean   @default(false)
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  projectId   String
+  taskId      String
+  userId      String
+  createdById String
+
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task      ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User        @relation("UserProjectTaskAccess", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User        @relation("UserCreatedProjectTaskAccess", fields: [createdById], references: [id])
+
+  @@unique([taskId, userId])
+  @@index([userId])
+  @@index([projectId, userId])
+  @@index([expiresAt])
 }
 
 model ProjectTaskAssignee {

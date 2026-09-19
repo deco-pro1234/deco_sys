@@ -38,7 +38,10 @@ export default async function ProjectDetailPage({
   }
   if (!project) redirect('/projects')
 
-  const candidates = session.isAdmin ? await getProjectMemberCandidates() : []
+  const candidates =
+    project.canManageTempAccess || project.canManageProject
+      ? await getProjectMemberCandidates(projectId)
+      : []
 
   return (
     <div className="min-h-screen bg-[#F2F2F7]">

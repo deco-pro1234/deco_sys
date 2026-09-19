@@ -16,7 +16,8 @@ type ProjectListItem = {
   owner?: { id: string; roleName?: string | null } | null
   members?: Array<{ userId: string; user?: { roleName?: string | null } | null }>
   _count?: { tasks: number; ledger: number }
-  ledgerSummary?: { incomeHkd: number; expenseHkd: number; balanceHkd: number }
+  ledgerSummary?: { incomeHkd: number; expenseHkd: number; balanceHkd: number } | null
+  accessMode?: 'full' | 'temp'
 }
 
 type Candidate = { id: string; roleName: string; email: string; isAdmin: boolean }
@@ -203,7 +204,16 @@ export default function ProjectsClient({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="truncate text-base font-semibold text-gray-900">{project.title}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="truncate text-base font-semibold text-gray-900">
+                      {project.title}
+                    </div>
+                    {project.accessMode === 'temp' ? (
+                      <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                        {t('projectTempAccessBadge')}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="mt-1 text-xs text-gray-500">
                     {t('projectOwner')}: {project.owner?.roleName || '—'} · {t('projectEndDate')}:{' '}
                     {dayLabel(project.endDate)}
@@ -219,14 +229,22 @@ export default function ProjectsClient({
                   <div className="font-semibold text-gray-800">{project._count?.tasks ?? 0}</div>
                 </div>
                 <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                  <div className="text-gray-400">{t('projectLedgerBalance')}</div>
+                  <div className="text-gray-400">
+                    {project.accessMode === 'temp'
+                      ? t('projectTempAccessBadge')
+                      : t('projectLedgerBalance')}
+                  </div>
                   <div className="font-semibold text-gray-800">
-                    {formatCurrency(locale, project.ledgerSummary?.balanceHkd || 0)}
+                    {project.accessMode === 'temp'
+                      ? '—'
+                      : formatCurrency(locale, project.ledgerSummary?.balanceHkd || 0)}
                   </div>
                 </div>
                 <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
                   <div className="text-gray-400">{t('projectMembers')}</div>
-                  <div className="font-semibold text-gray-800">{project.members?.length ?? 0}</div>
+                  <div className="font-semibold text-gray-800">
+                    {project.accessMode === 'temp' ? '—' : project.members?.length ?? 0}
+                  </div>
                 </div>
               </div>
             </Link>
