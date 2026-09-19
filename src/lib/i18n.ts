@@ -276,7 +276,7 @@ const messages = {
       '事項可分大類／下級。帳冊僅屬本項目。臨時帳只能看到獲授權分組內的事項。系統管理員對項目擁有與負責人相同的管理權限。',
     helpProjectLedgerTitle: '項目帳冊',
     helpProjectLedgerBody:
-      '只記錄本項目 HKD 收支，不會寫入公帳或變更資金池。負責人／管理員可見完整帳冊；一般成員通常只管理自己新增的紀錄。',
+      '只記錄本項目 HKD 收支，不會寫入公帳或變更資金池。可上傳單據附件，並用圖像辨識填入金額與備註。負責人／管理員可見完整帳冊；一般成員通常只管理自己新增的紀錄。',
     helpProjectMembersTitle: '項目成員角色',
     helpProjectMembersBody:
       '負責人：管理設定與成員、臨時授權、完整帳冊。\n管理員（若已啟用）：可管理臨時授權與完整帳冊，但不能改項目設定。\n成員：處理事項與備註；帳冊範圍依權限設定。\n系統 Admin 等同負責人權限，且可管理所有項目。',
@@ -925,7 +925,7 @@ const messages = {
       'Tasks can use major/sub sections. The ledger is project-only. Temp accounts only see granted sections. System admins have the same project powers as the owner.',
     helpProjectLedgerTitle: 'Project ledger',
     helpProjectLedgerBody:
-      'HKD income/expense for this project only — never writes to the public ledger or pools. Owner/manager see the full ledger; members usually manage only entries they created.',
+      'HKD income/expense for this project only — never writes to the public ledger or pools. Upload receipt attachments and use OCR to fill amount and notes. Owner/manager see the full ledger; members usually manage only entries they created.',
     helpProjectMembersTitle: 'Member roles',
     helpProjectMembersBody:
       'Owner: settings, members, temp access, full ledger.\nManager (when enabled): temp access and full ledger, but not project settings.\nMember: tasks and notes; ledger scope follows permissions.\nSystem Admin equals owner powers on every project.',

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
@@ -34,6 +34,7 @@ import {
   type ProjectCompletionStats,
 } from '@/lib/projects/completion'
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
+import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 
 type ContactProfile = {
   contactPhone?: string | null
@@ -160,6 +161,7 @@ type ProjectDetail = {
     note?: string | null
     createdById?: string
     createdBy?: { id?: string; roleName?: string | null } | null
+    attachments?: FileAttachment[]
   }>
   memos: Array<{
     id: string
@@ -303,6 +305,9 @@ export default function ProjectDetailClient({
   const [ledgerAmount, setLedgerAmount] = useState('')
   const [ledgerDate, setLedgerDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [ledgerNote, setLedgerNote] = useState('')
+  const [ledgerAttachments, setLedgerAttachments] = useState<ClientAttachment[]>([])
+  const [ledgerOcrAttachmentIndex, setLedgerOcrAttachmentIndex] = useState(0)
+  const [ledgerAttachmentNote, setLedgerAttachmentNote] = useState('')
 
   const [memo, setMemo] = useState('')
   const [busy, setBusy] = useState(false)
@@ -690,6 +695,66 @@ export default function ProjectDetailClient({
         return [] as ClientAttachment[]
       }
     }
+  }
+
+  const handleLedgerImageChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const files = await prepareUploadFiles(file)
+    if (files.length === 0) return
+    setLedgerAttachments(files)
+    setLedgerOcrAttachmentIndex(0)
+    setLedgerAttachmentNote(files[0]?.note || '')
+    event.target.value = ''
+  }
+
+  const removeLedgerAttachmentAt = (index: number) => {
+    const next = ledgerAttachments.filter((_, i) => i !== index)
+    let nextOcr = ledgerOcrAttachmentIndex
+    if (index < ledgerOcrAttachmentIndex) nextOcr = ledgerOcrAttachmentIndex - 1
+    else if (index === ledgerOcrAttachmentIndex) nextOcr = 0
+    nextOcr = Math.min(nextOcr, Math.max(0, next.length - 1))
+    setLedgerAttachments(next)
+    setLedgerOcrAttachmentIndex(nextOcr)
+    setLedgerAttachmentNote(next[nextOcr]?.note || '')
+  }
+
+  const appendLedgerOcrText = (payload: OcrResolvedPayload | string) => {
+    if (typeof payload === 'string') {
+      setLedgerNote((current) => (current.trim() ? `${current.trim()}\n${payload}` : payload))
+      return
+    }
+    if (payload.amount != null) {
+      setLedgerAmount(String(Math.abs(payload.amount)))
+    }
+    if (payload.noteText) {
+      setLedgerNote((current) =>
+        current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText
+      )
+    } else if (payload.contentText) {
+      setLedgerNote((current) =>
+        current.trim() ? `${current.trim()}\n${payload.contentText}` : payload.contentText
+      )
+    }
+    if (payload.attachmentMemo) {
+      const ocrIndex = ledgerAttachments[ledgerOcrAttachmentIndex]
+        ? ledgerOcrAttachmentIndex
+        : 0
+      setLedgerAttachmentNote(payload.attachmentMemo)
+      setLedgerAttachments((prev) =>
+        prev.map((item, index) =>
+          index === ocrIndex ? { ...item, note: payload.attachmentMemo } : item
+        )
+      )
+    }
+  }
+
+  const resetLedgerForm = () => {
+    setLedgerAmount('')
+    setLedgerNote('')
+    setLedgerAttachments([])
+    setLedgerOcrAttachmentIndex(0)
+    setLedgerAttachmentNote('')
   }
 
   const downloadPdfBytes = (filename: string, bytes: Uint8Array) => {
@@ -1844,6 +1909,91 @@ export default function ProjectDetailClient({
             placeholder={t('note')}
             className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
           />
+          <div className="space-y-3 rounded-2xl border border-dashed border-gray-300 bg-[#F8FAFC] p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">
+                {t('attachment')}{' '}
+                <span className="normal-case font-normal">({t('attachmentAcceptHint')})</span>
+              </label>
+              <OcrNoteButton
+                locale={locale}
+                attachments={ledgerAttachments}
+                context="project-ledger"
+                onResolved={appendLedgerOcrText}
+                disabled={busy}
+              />
+            </div>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={handleLedgerImageChange}
+              className="w-full text-sm text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-[#007AFF]/10 file:px-5 file:py-2.5 file:text-sm file:font-semibold file:text-[#007AFF]"
+            />
+            <input
+              value={ledgerAttachmentNote}
+              onChange={(e) => {
+                const value = e.target.value
+                setLedgerAttachmentNote(value)
+                setLedgerAttachments((prev) =>
+                  prev.map((item, index) =>
+                    index ===
+                    (ledgerAttachments[ledgerOcrAttachmentIndex]
+                      ? ledgerOcrAttachmentIndex
+                      : 0)
+                      ? { ...item, note: value }
+                      : item
+                  )
+                )
+              }}
+              placeholder={t('attachmentTypePlaceholder')}
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm outline-none shadow-sm"
+            />
+            {ledgerAttachments.length > 0 ? (
+              <div className="space-y-2">
+                {ledgerAttachments.length > 1 ? (
+                  <div className="text-xs font-medium text-[#007AFF]">
+                    {t('pdfPagesReady').replace('{{count}}', String(ledgerAttachments.length))}
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {ledgerAttachments.map((item, index) => (
+                    <div
+                      key={`${item.size}-${index}-${item.pageIndex || 0}`}
+                      className={`relative rounded-lg border p-1 ${
+                        index === ledgerOcrAttachmentIndex
+                          ? 'border-[#007AFF] ring-2 ring-[#007AFF]/20'
+                          : 'border-gray-200'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLedgerOcrAttachmentIndex(index)
+                          setLedgerAttachmentNote(item.note || '')
+                        }}
+                        className="block"
+                      >
+                        <img src={item.url} alt="" className="h-16 w-16 rounded object-cover" />
+                        {(item.pageIndex || ledgerAttachments.length > 1) && (
+                          <div className="mt-0.5 text-center text-[10px] text-gray-500">
+                            {item.pageIndex ?? index + 1}
+                          </div>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeLedgerAttachmentAt(index)}
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-[10px] leading-none text-white"
+                        aria-label={t('delete')}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             disabled={busy || !ledgerAmount}
@@ -1854,12 +2004,17 @@ export default function ProjectDetailClient({
                   amount: Number(ledgerAmount),
                   date: ledgerDate,
                   note: ledgerNote,
+                  attachments:
+                    ledgerAttachments.length > 0
+                      ? ledgerAttachments.map((a) => ({
+                          url: a.url,
+                          size: a.size,
+                          note: a.note || ledgerAttachmentNote || undefined,
+                        }))
+                      : undefined,
                 })
               )
-              if (ok) {
-                setLedgerAmount('')
-                setLedgerNote('')
-              }
+              if (ok) resetLedgerForm()
             }}
             className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
           >
@@ -1876,8 +2031,8 @@ export default function ProjectDetailClient({
                 const canDelete =
                   canViewFullLedger || entry.createdById === currentUserId
                 return (
-                  <div key={entry.id} className="flex items-center justify-between gap-3 py-3">
-                    <div>
+                  <div key={entry.id} className="flex items-start justify-between gap-3 py-3">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-gray-900">
                         {entry.type === 'INCOME' ? t('income') : t('expense')}{' '}
                         {formatCurrency(locale, entry.amount)}
@@ -1889,6 +2044,25 @@ export default function ProjectDetailClient({
                           ? ` · ${entry.createdBy.roleName}`
                           : ''}
                       </div>
+                      {(entry.attachments || []).length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(entry.attachments || []).map((att, idx) => (
+                            <button
+                              key={att.id}
+                              type="button"
+                              onClick={() => openAttachment(att.fileUrl)}
+                              className="rounded-lg border border-gray-200 bg-white p-1 shadow-sm"
+                              title={att.note || t('attachment')}
+                            >
+                              <img
+                                src={att.fileUrl}
+                                alt={att.note || `${t('attachment')} ${idx + 1}`}
+                                className="h-14 w-14 rounded object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     {canDelete ? (
                       <button
@@ -1899,7 +2073,7 @@ export default function ProjectDetailClient({
                             run(() => deleteProjectLedgerEntry(entry.id))
                           }
                         }}
-                        className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                        className="shrink-0 rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
                       >
                         {t('delete')}
                       </button>

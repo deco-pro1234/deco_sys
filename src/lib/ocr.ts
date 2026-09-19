@@ -13,6 +13,7 @@ export type OcrContext =
   | 'record-edit'
   | 'activity-edit'
   | 'recurring'
+  | 'project-ledger'
 
 export type OcrDocumentType =
   | 'INVOICE'
@@ -79,6 +80,7 @@ const OCR_CONTEXT_LABELS: Record<OcrContext, string> = {
   'record-edit': '公帳修改申請備註',
   'activity-edit': '事項編輯備註',
   recurring: '恆常收支備註',
+  'project-ledger': '項目帳冊單據',
 }
 
 export function getOcrContextLabel(context: OcrContext) {

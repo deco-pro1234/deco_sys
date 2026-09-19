@@ -235,6 +235,7 @@ model Attachment {
   projectId String?
   projectTaskId String?
   projectSectionId String?
+  projectLedgerEntryId String?
   memoId String?
   payrollPaidId String? @unique
   payrollPdfId  String? @unique
@@ -250,6 +251,7 @@ model Attachment {
   project       Project?      @relation("ProjectAttachments", fields: [projectId], references: [id])
   projectTask   ProjectTask?  @relation("ProjectTaskAttachments", fields: [projectTaskId], references: [id])
   projectSection ProjectSection? @relation("ProjectSectionAttachments", fields: [projectSectionId], references: [id], onDelete: Cascade)
+  projectLedgerEntry ProjectLedgerEntry? @relation("ProjectLedgerEntryAttachments", fields: [projectLedgerEntryId], references: [id], onDelete: Cascade)
   memo          Memo?         @relation("MemoAttachments", fields: [memoId], references: [id])
   payrollPaid   Payroll?      @relation("PaidReceiptAttachments", fields: [payrollPaidId], references: [id])
   payrollPdf    Payroll?      @relation("PdfPayrollAttachments", fields: [payrollPdfId], references: [id])
@@ -257,6 +259,7 @@ model Attachment {
 
   @@index([projectSectionId])
   @@index([projectTaskId])
+  @@index([projectLedgerEntryId])
 }
 
 model Memo {
@@ -693,6 +696,7 @@ model ProjectLedgerEntry {
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy User    @relation("UserProjectLedgerEntries", fields: [createdById], references: [id])
+  attachments Attachment[] @relation("ProjectLedgerEntryAttachments")
 
   @@index([projectId, date])
 }

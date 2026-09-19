@@ -18,6 +18,12 @@ import { randomUUID } from 'crypto'
 export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'DONE' | 'ARCHIVED'
 export type ProjectTaskStatus = 'TODO' | 'DOING' | 'DONE'
 export type ProjectLedgerType = 'INCOME' | 'EXPENSE'
+
+type AttachmentPayload = {
+  url: string
+  size: number
+  note?: string
+}
 export type ProjectAccessMode = 'full' | 'temp'
 /** Project roster role (not system admin). */
 export type ProjectMemberRole = 'OWNER' | 'MANAGER' | 'MEMBER'
@@ -133,6 +139,10 @@ const projectInclude = {
     orderBy: [{ date: 'desc' as const }, { createdAt: 'desc' as const }],
     include: {
       createdBy: { select: { id: true, roleName: true } },
+      attachments: {
+        orderBy: { createdAt: 'asc' as const },
+        include: { uploader: { select: { roleName: true } } },
+      },
     },
   },
   memos: {
@@ -1471,6 +1481,7 @@ export async function createProjectLedgerEntry(
     amount: number
     date: string
     note?: string
+    attachments?: AttachmentPayload[]
   }
 ) {
   try {
@@ -1485,15 +1496,31 @@ export async function createProjectLedgerEntry(
       return { success: false, error: t('projectLedgerTypeInvalid') }
     }
 
-    await prisma.projectLedgerEntry.create({
-      data: {
-        projectId,
-        type: input.type,
-        amount,
-        date: new Date(input.date),
-        note: input.note?.trim() || null,
-        createdById: session.userId,
-      },
+    const attachmentList = (input.attachments || []).filter((item) => item?.url)
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.projectLedgerEntry.create({
+        data: {
+          projectId,
+          type: input.type,
+          amount,
+          date: new Date(input.date),
+          note: input.note?.trim() || null,
+          createdById: session.userId,
+        },
+      })
+
+      for (const item of attachmentList) {
+        await tx.attachment.create({
+          data: {
+            fileUrl: item.url,
+            size: Number(item.size) || 0,
+            note: item.note || null,
+            uploaderId: session.userId,
+            projectId,
+            projectLedgerEntryId: created.id,
+          },
+        })
+      }
     })
     revalidateProjects(projectId)
     return { success: true }
@@ -1521,6 +1548,39 @@ export async function deleteProjectLedgerEntry(entryId: string) {
   }
 }
 
+export async function addProjectLedgerAttachment(
+  entryId: string,
+  input: AttachmentPayload
+) {
+  try {
+    const entry = await prisma.projectLedgerEntry.findUnique({ where: { id: entryId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!entry) return { success: false, error: t('projectLedgerNotFound') }
+    const ctx = await assertProjectMember(entry.projectId)
+    const canEditOthers = ctx.canViewFullLedger
+    if (!canEditOthers && entry.createdById !== ctx.session.userId) {
+      return { success: false, error: t('unauthorized') }
+    }
+    if (!input?.url) return { success: false, error: t('ocrSelectAttachmentFirst') }
+
+    await prisma.attachment.create({
+      data: {
+        fileUrl: input.url,
+        size: Number(input.size) || 0,
+        note: input.note || null,
+        uploaderId: ctx.session.userId,
+        projectId: entry.projectId,
+        projectLedgerEntryId: entryId,
+      },
+    })
+    revalidateProjects(entry.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 export async function addProjectMemo(projectId: string, content: string) {
   try {
     const { session } = await assertProjectMember(projectId)
@@ -1541,12 +1601,6 @@ export async function addProjectMemo(projectId: string, content: string) {
   } catch (e: any) {
     return { success: false, error: e.message }
   }
-}
-
-type AttachmentPayload = {
-  url: string
-  size: number
-  note?: string
 }
 
 export async function addProjectTaskAttachment(
