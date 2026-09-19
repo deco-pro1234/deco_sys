@@ -5,7 +5,6 @@ import { getCurrentLocale } from '@/lib/locale'
 import { isProjectTempAccount } from '@/lib/access'
 import {
   getProjectDetail,
-  getProjectMemberCandidates,
   getProjectTempAccountCandidates,
 } from '../../actions/project'
 import ProjectDetailClient from '../ProjectDetailClient'
@@ -42,12 +41,9 @@ export default async function ProjectDetailPage({
   }
   if (!project) redirect('/projects')
 
-  const [memberCandidates, tempCandidates] = await Promise.all([
-    project.canManageProject ? getProjectMemberCandidates(projectId) : Promise.resolve([]),
-    project.canManageTempAccess
-      ? getProjectTempAccountCandidates(projectId)
-      : Promise.resolve([]),
-  ])
+  const tempCandidates = project.canManageTempAccess
+    ? await getProjectTempAccountCandidates(projectId)
+    : []
 
   return (
     <div className="min-h-screen bg-[#F2F2F7]">
@@ -56,7 +52,6 @@ export default async function ProjectDetailPage({
         currentUserId={session.userId}
         isAdmin={session.isAdmin}
         project={toClientJSON(project)}
-        memberCandidates={toClientJSON(memberCandidates)}
         tempAccountCandidates={toClientJSON(tempCandidates)}
       />
     </div>
