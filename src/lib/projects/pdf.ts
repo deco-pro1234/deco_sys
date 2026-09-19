@@ -50,6 +50,7 @@ export type ProjectPdfLedgerEntry = {
   type: 'INCOME' | 'EXPENSE' | string
   amount: number
   date: Date | string
+  content?: string | null
   note?: string | null
   createdBy?: string | null
 }
@@ -1173,11 +1174,12 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
       const sorted = [...ledger].sort((a, b) => (timeMs(a.date) ?? 0) - (timeMs(b.date) ?? 0))
       autoTable(doc, {
         startY: y,
-        head: [[L.colDate, L.colType, L.colAmount, L.note, L.colBy]],
+        head: [[L.colDate, L.colType, L.colAmount, L.content, L.note, L.colBy]],
         body: sorted.map((e) => [
           formatDay(e.date),
           e.type === 'INCOME' ? L.income : L.expense,
           fmt(e.amount),
+          e.content?.trim() || '—',
           e.note?.trim() || '—',
           e.createdBy || '—',
         ]),

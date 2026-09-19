@@ -687,6 +687,7 @@ model ProjectLedgerEntry {
   type      String // INCOME | EXPENSE
   amount    Float // HKD, always positive; sign inferred from type
   date      DateTime
+  content   String? // short OCR keywords (vendor / order no.)
   note      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -1480,6 +1480,7 @@ export async function createProjectLedgerEntry(
     type: ProjectLedgerType
     amount: number
     date: string
+    content?: string
     note?: string
     attachments?: AttachmentPayload[]
   }
@@ -1504,6 +1505,7 @@ export async function createProjectLedgerEntry(
           type: input.type,
           amount,
           date: new Date(input.date),
+          content: input.content?.trim() || null,
           note: input.note?.trim() || null,
           createdById: session.userId,
         },
@@ -2378,6 +2380,7 @@ export async function exportProjectPdf(
               type: e.type,
               amount: e.amount,
               date: e.date,
+              content: e.content,
               note: e.note,
               createdBy: e.createdBy?.roleName || null,
             }))
