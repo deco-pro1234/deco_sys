@@ -56,6 +56,7 @@ type RecordItem = {
   type: string
   status?: string
   amount: number
+  content?: string | null
   note?: string | null
   category?: RecordRelation | null
   subCategory?: RecordRelation | null
@@ -89,6 +90,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
   const [attachments, setAttachments] = useState<ClientAttachment[]>([])
   const [ocrAttachmentIndex, setOcrAttachmentIndex] = useState(0)
   const [attachmentNote, setAttachmentNote] = useState('')
+  const [content, setContent] = useState('')
   const [note, setNote] = useState('')
   const [ocrMemo, setOcrMemo] = useState('')
 
@@ -175,10 +177,18 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
     if (payload.amount != null) {
       setAmount(String(Math.abs(payload.amount)))
     }
+    if (payload.contentText) {
+      setContent((current) =>
+        current.trim() ? `${current.trim()}｜${payload.contentText}` : payload.contentText
+      )
+    }
     if (payload.noteText) {
       setNote((current) => (current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText))
+    }
+    const memoBits = [payload.contentText, payload.noteText].filter(Boolean).join('｜')
+    if (memoBits) {
       setOcrMemo((current) => {
-        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${payload.noteText}`
+        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${memoBits}`
         return current.trim() ? `${current.trim()}\n${line}` : line
       })
     }
@@ -221,6 +231,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
     const res = await createRecord({
       type,
       date: new Date(date),
+      content,
       note,
       amount: finalAmount,
       categoryId,
@@ -245,7 +256,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
       alert(`${t('submitFailed')}: ${res.error}`)
       setIsSubmitting(false)
     }
-  }, [amount, attachments, attachmentNote, categoryId, date, note, ocrMemo, poolId, subCategoryId, t, thirdCategoryId, type])
+  }, [amount, attachments, attachmentNote, categoryId, content, date, note, ocrMemo, poolId, subCategoryId, t, thirdCategoryId, type])
 
   useEffect(() => {
     if (!showConfirmDialog || countdown <= 0) {
@@ -443,6 +454,16 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
             </div>
 
             <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">{t('recordContentOptional')}</label>
+              <input
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                className={inputClass}
+                placeholder={t('recordContentPlaceholder')}
+              />
+            </div>
+
+            <div className="md:col-span-2">
               <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">{t('noteOptional')}</label>
               <textarea
                 value={note}
@@ -584,6 +605,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
                   <th className="px-6 py-3 font-medium">{t('type')}</th>
                   <th className="px-6 py-3 font-medium">{t('category')}</th>
                   <th className="px-6 py-3 font-medium">{t('amount')}</th>
+                  <th className="px-6 py-3 font-medium">{t('recordContent')}</th>
                   <th className="px-6 py-3 font-medium">{t('note')}</th>
                   <th className="px-6 py-3 font-medium">{t('detail')}</th>
                 </tr>
@@ -591,7 +613,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
               <tbody className="divide-y divide-gray-100">
                 {initialRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-400 font-medium">{t('noRecords')}</td>
+                    <td colSpan={7} className="p-8 text-center text-gray-400 font-medium">{t('noRecords')}</td>
                   </tr>
                 ) : (
                   initialRecords.map(record => (
@@ -612,6 +634,7 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
                       <td className={`px-6 py-4 font-bold ${record.type === 'INCOME' ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>
                         {formatCurrency(locale, record.amount)}
                       </td>
+                      <td className="px-6 py-4 text-gray-700 truncate max-w-[10rem]" title={record.content || ''}>{record.content || '-'}</td>
                       <td className="px-6 py-4 text-gray-500 truncate max-w-xs">{record.note || '-'}</td>
                       <td className="px-6 py-4">
                         <button onClick={() => setSelectedRecord(record)} className="text-[#007AFF] hover:underline font-medium text-sm">
@@ -647,6 +670,9 @@ export default function HomePageClient({ locale, session, stats, initialDate, in
                   <div className="text-sm text-gray-600">
                     {[record.category?.name, record.subCategory?.name, record.thirdCategory?.name].filter(Boolean).join(' / ') || '-'}
                   </div>
+                  {record.content && (
+                    <div className="text-xs text-gray-700 truncate">{record.content}</div>
+                  )}
                   {record.note && (
                     <div className="text-xs text-gray-500 truncate">{record.note}</div>
                   )}

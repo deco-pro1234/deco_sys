@@ -103,6 +103,7 @@ type ReportColumnId =
   | 'role'
   | 'amount'
   | 'attachmentCount'
+  | 'content'
   | 'note'
   | 'status'
   | 'activityTitle'
@@ -130,6 +131,7 @@ const RECORD_EXPORT_COLUMNS: Array<{ id: ReportColumnId; labelKey: string }> = [
   { id: 'role', labelKey: 'role' },
   { id: 'amount', labelKey: 'amount' },
   { id: 'attachmentCount', labelKey: 'attachmentCount' },
+  { id: 'content', labelKey: 'recordContent' },
   { id: 'note', labelKey: 'note' },
   { id: 'status', labelKey: 'status' },
 ]
@@ -231,6 +233,9 @@ function buildRecordExportCols(
       width: 12,
       halign: 'center',
     })
+  }
+  if (visible.content) {
+    cols.push({ id: 'content', head: t('recordContent'), cell: r.content || '-', width: 28 })
   }
   if (visible.note) {
     cols.push({ id: 'note', head: t('note'), cell: r.note || '-', width: 'auto' })
@@ -404,6 +409,9 @@ function buildAccountingExportCols(
       halign: 'right',
     })
   }
+  if (visible.content) {
+    cols.push({ id: 'content', head: t('recordContent'), cell: r.content || '-', width: 28 })
+  }
   if (visible.note) {
     cols.push({ id: 'note', head: t('note'), cell: r.note || '-', width: 36 })
   }
@@ -503,6 +511,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
   const [editSubCategoryId, setEditSubCategoryId] = useState('')
   const [editThirdCategoryId, setEditThirdCategoryId] = useState('')
   const [editAmount, setEditAmount] = useState('')
+  const [editContent, setEditContent] = useState('')
   const [editNote, setEditNote] = useState('')
   const [editAttachments, setEditAttachments] = useState<ClientAttachment[]>([])
   const [ocrAttachmentIndex, setOcrAttachmentIndex] = useState(0)
@@ -525,6 +534,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
     setEditSubCategoryId(record.subCategoryId || '')
     setEditThirdCategoryId(record.thirdCategoryId || '')
     setEditAmount(Math.abs(record.amount).toString())
+    setEditContent(record.content || '')
     setEditNote(record.note || '')
     setEditAttachments([])
     setOcrAttachmentIndex(0)
@@ -546,6 +556,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
       subCategoryId: editSubCategoryId,
       thirdCategoryId: editThirdCategoryId,
       amount: finalAmount,
+      content: editContent,
       note: editNote,
       poolId: editingRecord.poolId,
       attachments:
@@ -613,6 +624,11 @@ export default function ReportClient({ categories, users, pools, locale }: Props
     }
     if (payload.amount != null) {
       setEditAmount(String(Math.abs(payload.amount)))
+    }
+    if (payload.contentText) {
+      setEditContent((current) =>
+        current.trim() ? `${current.trim()}｜${payload.contentText}` : payload.contentText
+      )
     }
     if (payload.noteText) {
       setEditNote((current) => (current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText))
@@ -1599,6 +1615,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
                     {recordColumns.pool ? <th className="px-4 py-3 font-semibold">{t('pool')}</th> : null}
                     {recordColumns.amount ? <th className="px-4 py-3 font-semibold">{t('amount')}</th> : null}
                     {recordColumns.attachmentCount ? <th className="px-4 py-3 font-semibold">{t('attachmentCount')}</th> : null}
+                    {recordColumns.content ? <th className="px-4 py-3 font-semibold">{t('recordContent')}</th> : null}
                     {recordColumns.note ? <th className="px-4 py-3 font-semibold">{t('note')}</th> : null}
                     {recordColumns.status ? <th className="px-4 py-3 font-semibold">{t('status')}</th> : null}
                     <th className="px-4 py-3 font-semibold">{t('modify')}</th>
@@ -1642,6 +1659,9 @@ export default function ReportClient({ categories, users, pools, locale }: Props
                         ) : null}
                         {recordColumns.attachmentCount ? (
                           <td className="px-4 py-3 text-center">{attachmentCountOf(record)}</td>
+                        ) : null}
+                        {recordColumns.content ? (
+                          <td className="px-4 py-3 max-w-[140px] truncate text-gray-700" title={record.content || ''}>{record.content || '-'}</td>
                         ) : null}
                         {recordColumns.note ? (
                           <td className="px-4 py-3 max-w-[160px] truncate text-gray-500" title={record.note || ''}>{record.note || '-'}</td>
@@ -1696,6 +1716,7 @@ export default function ReportClient({ categories, users, pools, locale }: Props
                     <div className="text-xs text-gray-400">
                       {t('pool')}: {record.pool?.name || '-'} · {t('attachmentCount')}: {attachmentCountOf(record)}
                     </div>
+                    {record.content && <div className="text-xs text-gray-700 truncate">{record.content}</div>}
                     {record.note && <div className="text-xs text-gray-500 truncate">{record.note}</div>}
                     <div className="flex justify-between items-center pt-2 mt-2 border-t border-gray-50">
                       <span className="text-xs text-gray-400">{record.user?.roleName || '-'} · {record.status === 'PENDING' ? t('pendingApproval') : t('approvedStored')}</span>
@@ -1894,6 +1915,16 @@ export default function ReportClient({ categories, users, pools, locale }: Props
                       <option key={third.id} value={third.id}>{third.name}</option>
                     ))}
                   </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase">{t('recordContentOptional')}</label>
+                  <input
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className={inputClass}
+                    placeholder={t('recordContentPlaceholder')}
+                  />
                 </div>
 
                 <div className="md:col-span-2">

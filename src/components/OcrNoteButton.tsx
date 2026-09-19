@@ -7,7 +7,9 @@ import { createTranslator, type Locale } from '@/lib/i18n'
 import type { OcrContext, OcrParsedResult } from '@/lib/ocr'
 
 export type OcrResolvedPayload = {
-  /** Company / order / summary / keywords for record note (~80 chars) */
+  /** Short keywords for record content field */
+  contentText: string
+  /** Detailed summary for record note field */
   noteText: string
   /** Short document type only for attachment note (replace, never append) */
   attachmentMemo: string
@@ -93,6 +95,7 @@ export default function OcrNoteButton({
     }
 
     setLoading(true)
+    const contentParts: string[] = []
     const noteParts: string[] = []
     const memoParts: string[] = []
     let amount: number | null = null
@@ -109,6 +112,7 @@ export default function OcrNoteButton({
         setLoading(false)
         return
       }
+      if (result.contentText) contentParts.push(result.contentText)
       if (result.noteText) noteParts.push(result.noteText)
       if (result.attachmentMemo) memoParts.push(result.attachmentMemo)
       if (amount == null && result.amount != null) amount = result.amount
@@ -116,6 +120,7 @@ export default function OcrNoteButton({
     }
 
     const payload: OcrResolvedPayload = {
+      contentText: mergeUnique(contentParts),
       noteText: mergeUnique(noteParts),
       attachmentMemo: memoParts[0] || '',
       amount,

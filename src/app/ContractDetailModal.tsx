@@ -130,11 +130,16 @@ export default function ContractDetailModal({
   }
 
   const onOcrResolved = (payload: OcrResolvedPayload | string) => {
-    const noteText = typeof payload === 'string' ? payload : payload.noteText
-    const attachmentMemo = typeof payload === 'string' ? '' : payload.attachmentMemo
-    if (noteText) {
-      setNote((current: string) => (current.trim() ? `${current.trim()}\n${noteText}` : noteText))
-      setPendingOcrKeywords((current) => (current.trim() ? `${current.trim()}\n${noteText}` : noteText))
+    if (typeof payload === 'string') {
+      setNote((current: string) => (current.trim() ? `${current.trim()}\n${payload}` : payload))
+      setPendingOcrKeywords((current) => (current.trim() ? `${current.trim()}\n${payload}` : payload))
+      return
+    }
+    const combined = [payload.contentText, payload.noteText].filter(Boolean).join('\n')
+    const attachmentMemo = payload.attachmentMemo
+    if (combined) {
+      setNote((current: string) => (current.trim() ? `${current.trim()}\n${combined}` : combined))
+      setPendingOcrKeywords((current) => (current.trim() ? `${current.trim()}\n${combined}` : combined))
     }
     if (attachmentMemo) {
       const ocrIndex = attachments[ocrAttachmentIndex] ? ocrAttachmentIndex : 0

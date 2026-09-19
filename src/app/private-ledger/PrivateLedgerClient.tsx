@@ -15,6 +15,7 @@ type PrivateRecordItem = {
   date: string | Date
   type: string
   amount: number
+  content?: string | null
   note?: string | null
   customCategory?: string | null
   category?: { name: string } | null
@@ -56,6 +57,7 @@ export default function PrivateLedgerClient({
   const [date, setDate] = useState(initialDate)
   const [customCategory, setCustomCategory] = useState('')
   const [amount, setAmount] = useState('')
+  const [content, setContent] = useState('')
   const [note, setNote] = useState('')
   const [ocrMemo, setOcrMemo] = useState('')
   const [attachments, setAttachments] = useState<ClientAttachment[]>([])
@@ -135,10 +137,18 @@ export default function PrivateLedgerClient({
     if (payload.amount != null) {
       setAmount(String(Math.abs(payload.amount)))
     }
+    if (payload.contentText) {
+      setContent((current) =>
+        current.trim() ? `${current.trim()}｜${payload.contentText}` : payload.contentText
+      )
+    }
     if (payload.noteText) {
       setNote((current) => (current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText))
+    }
+    const memoBits = [payload.contentText, payload.noteText].filter(Boolean).join('｜')
+    if (memoBits) {
       setOcrMemo((current) => {
-        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${payload.noteText}`
+        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${memoBits}`
         return current.trim() ? `${current.trim()}\n${line}` : line
       })
     }
@@ -160,6 +170,7 @@ export default function PrivateLedgerClient({
     const res = await createPrivateRecord({
       type,
       date: new Date(date),
+      content,
       note,
       customCategory,
       amount: numericAmount,
@@ -236,12 +247,13 @@ export default function PrivateLedgerClient({
 
     autoTable(doc, {
       startY: 46,
-      head: [[t('date'), t('type'), t('category'), t('amount'), t('note')]],
+      head: [[t('date'), t('type'), t('category'), t('amount'), t('recordContent'), t('note')]],
       body: initialRecords.map((item) => [
         new Date(item.date).toLocaleDateString(locale === 'en' ? 'en-HK' : 'zh-HK'),
         item.type === 'INCOME' ? t('income') : t('expense'),
         item.customCategory?.trim() || [item.category?.name, item.subCategory?.name, item.thirdCategory?.name].filter(Boolean).join(' / ') || t('uncategorized'),
         formatCurrency(locale, item.amount),
+        item.content || '-',
         item.note || '-',
       ]),
       styles: { font: fontBase64 ? 'NotoSansSC' : 'helvetica' },
@@ -333,7 +345,14 @@ export default function PrivateLedgerClient({
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">{t('noteOptional')}</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">{t('recordContentOptional')}</label>
+                  <input
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    className={inputClass}
+                    placeholder={t('recordContentPlaceholder')}
+                  />
+                  <label className="mb-1.5 mt-3 block text-xs font-semibold uppercase tracking-wider text-gray-500">{t('noteOptional')}</label>
                   <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={4} className={inputClass} placeholder={t('noteLongPlaceholder')} />
                 </div>
                 <div className="space-y-3 rounded-2xl border border-dashed border-gray-300 bg-white/50 p-4 md:col-span-2">
@@ -461,12 +480,13 @@ export default function PrivateLedgerClient({
                 <th className="px-6 py-3 font-medium">{t('type')}</th>
                 <th className="px-6 py-3 font-medium">{t('category')}</th>
                 <th className="px-6 py-3 font-medium">{t('amount')}</th>
+                <th className="px-6 py-3 font-medium">{t('recordContent')}</th>
                 <th className="px-6 py-3 font-medium">{t('detail')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {initialRecords.length === 0 ? (
-                <tr><td colSpan={5} className="p-8 text-center font-medium text-gray-400">{t('noPrivateRecords')}</td></tr>
+                <tr><td colSpan={6} className="p-8 text-center font-medium text-gray-400">{t('noPrivateRecords')}</td></tr>
               ) : (
                 initialRecords.map((record) => (
                   <tr key={record.id} className="transition-colors hover:bg-gray-50/80">
@@ -474,6 +494,7 @@ export default function PrivateLedgerClient({
                     <td className="px-6 py-4">{record.type === 'INCOME' ? t('income') : t('expense')}</td>
                     <td className="px-6 py-4">{record.customCategory?.trim() || [record.category?.name, record.subCategory?.name, record.thirdCategory?.name].filter(Boolean).join(' / ') || t('uncategorized')}</td>
                     <td className={`px-6 py-4 font-bold ${record.amount > 0 ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>{formatCurrency(locale, record.amount)}</td>
+                    <td className="px-6 py-4 max-w-[10rem] truncate text-gray-700" title={record.content || ''}>{record.content || '-'}</td>
                     <td className="px-6 py-4"><button onClick={() => setSelectedRecord(record)} className="text-sm font-medium text-[#007AFF] hover:underline">{t('detail')}</button></td>
                   </tr>
                 ))
@@ -492,6 +513,7 @@ export default function PrivateLedgerClient({
                   <div className={`text-sm font-bold ${record.amount > 0 ? 'text-[#007AFF]' : 'text-[#FF3B30]'}`}>{formatCurrency(locale, record.amount)}</div>
                 </div>
                 <div className="text-sm text-gray-600">{record.customCategory?.trim() || [record.category?.name, record.subCategory?.name, record.thirdCategory?.name].filter(Boolean).join(' / ') || t('uncategorized')}</div>
+                {record.content && <div className="text-xs text-gray-700 truncate">{record.content}</div>}
                 <div className="flex items-center justify-between border-t border-gray-50 pt-2">
                   <span className="text-xs text-gray-400">{record.type === 'INCOME' ? t('income') : t('expense')}</span>
                   <button onClick={() => setSelectedRecord(record)} className="rounded bg-[#007AFF]/10 px-3 py-1 text-xs font-medium text-[#007AFF]">{t('detail')}</button>

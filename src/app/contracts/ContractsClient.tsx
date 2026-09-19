@@ -173,10 +173,11 @@ export default function ContractsClient({ locale, pools, currentUserId, initialC
     if (payload.amount != null) {
       setAmount(String(Math.abs(payload.amount)))
     }
-    if (payload.noteText) {
-      setNote((current) => (current.trim() ? `${current.trim()}\n${payload.noteText}` : payload.noteText))
+    if (payload.noteText || payload.contentText) {
+      const combined = [payload.contentText, payload.noteText].filter(Boolean).join('\n')
+      setNote((current) => (current.trim() ? `${current.trim()}\n${combined}` : combined))
       setOcrMemo((current) => {
-        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${payload.noteText}`
+        const line = `${locale === 'en' ? 'OCR' : '圖像辨識'}: ${combined}`
         return current.trim() ? `${current.trim()}\n${line}` : line
       })
     }

@@ -16,6 +16,7 @@ type AttachmentPayload = {
 export type CreatePrivateRecordInput = {
   type: 'INCOME' | 'EXPENSE'
   date: Date
+  content?: string
   note?: string
   customCategory?: string
   amount: number
@@ -241,6 +242,7 @@ export async function createPrivateRecord(data: CreatePrivateRecordInput) {
         data: {
           type: data.type,
           date: data.date,
+          content: data.content?.trim() || null,
           note: data.note,
           customCategory: customCategory || null,
           amount: data.amount,
@@ -342,23 +344,43 @@ export async function addPrivateRecordMemo(recordId: string, content: string) {
   }
 }
 
-export async function appendPrivateRecordNoteKeywords(recordId: string, noteText: string) {
+export async function appendPrivateRecordNoteKeywords(
+  recordId: string,
+  noteText: string,
+  contentText?: string
+) {
   try {
     const { session, record } = await assertPrivateRecordPermission(recordId)
-    const addition = noteText.trim()
-    if (!addition) return { success: true }
+    const noteAddition = noteText.trim()
+    const contentAddition = (contentText || '').trim()
+    if (!noteAddition && !contentAddition) return { success: true }
 
-    const nextNote = record.note?.trim() ? `${record.note.trim()}\n${addition}` : addition
+    const nextNote = noteAddition
+      ? record.note?.trim()
+        ? `${record.note.trim()}\n${noteAddition}`
+        : noteAddition
+      : record.note
+    const nextContent = contentAddition
+      ? record.content?.trim()
+        ? `${record.content.trim()}｜${contentAddition}`
+        : contentAddition
+      : record.content
+
+    const memoBody = [contentAddition, noteAddition].filter(Boolean).join('｜')
+
     await prisma.$transaction(async (tx) => {
       await tx.privateRecord.update({
         where: { id: recordId },
-        data: { note: nextNote },
+        data: {
+          ...(noteAddition ? { note: nextNote } : {}),
+          ...(contentAddition ? { content: nextContent } : {}),
+        },
       })
       await tx.memo.create({
         data: {
-          content: addition.startsWith('OCR') || addition.startsWith('圖像辨識')
-            ? addition
-            : `圖像辨識: ${addition}`,
+          content: memoBody.startsWith('OCR') || memoBody.startsWith('圖像辨識')
+            ? memoBody
+            : `圖像辨識: ${memoBody}`,
           authorId: session.userId,
           privateRecordId: recordId,
         },
