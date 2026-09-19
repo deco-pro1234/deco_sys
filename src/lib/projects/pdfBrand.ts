@@ -49,19 +49,24 @@ export function drawBrandHeader(
   }
 ): BrandHeaderResult {
   const { pageW, margin, fontReg, fontBold, reportTitle, projectTitle } = opts
-  const barH = 56
-  doc.setFillColor(248, 250, 252)
+  const barH = 58
+
+  // Soft gradient-like bands (two fills — jsPDF has no real gradient)
+  doc.setFillColor(241, 245, 249)
   doc.rect(0, 0, pageW, barH, 'F')
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.6)
-  doc.line(0, barH, pageW, barH)
+  doc.setFillColor(238, 244, 255)
+  doc.rect(0, 0, pageW * 0.42, barH, 'F')
+
+  // Accent stripe
+  doc.setFillColor(0, 122, 255)
+  doc.rect(0, barH - 3, pageW, 3, 'F')
 
   const logo = loadBrandLogoDataUrl()
   let textX = margin
   if (logo) {
     try {
-      const size = 36
-      doc.addImage(logo, 'PNG', margin, (barH - size) / 2, size, size)
+      const size = 34
+      doc.addImage(logo, 'PNG', margin, (barH - size) / 2 - 1, size, size)
       textX = margin + size + 10
     } catch {
       textX = margin
@@ -70,7 +75,7 @@ export function drawBrandHeader(
 
   doc.setFont(fontBold, 'bold')
   doc.setFontSize(12)
-  doc.setTextColor(26, 16, 64)
+  doc.setTextColor(15, 23, 42)
   doc.text(BRAND_NAME, textX, 22)
   doc.setFont(fontReg, 'normal')
   doc.setFontSize(8)
@@ -91,5 +96,5 @@ export function drawBrandHeader(
   }
 
   doc.setTextColor(30, 30, 30)
-  return { contentTop: barH + 14 }
+  return { contentTop: barH + 12 }
 }
