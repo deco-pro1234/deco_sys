@@ -1,0 +1,530 @@
+import { jsPDF } from 'jspdf'
+import { loadChineseFonts } from '@/lib/fonts/loadChineseFont'
+
+export type ProjectPdfLocale = 'zh' | 'en'
+
+export type ProjectPdfAttachment = {
+  note?: string | null
+  fileUrl: string
+  size?: number
+}
+
+export type ProjectPdfMemo = {
+  author: string
+  content: string
+  createdAt: Date | string
+}
+
+export type ProjectPdfTask = {
+  title: string
+  content?: string | null
+  status: string
+  startAt?: Date | string | null
+  dueDate?: Date | string | null
+  assignees?: string[]
+  sectionPath?: string
+  attachments?: ProjectPdfAttachment[]
+  memos?: ProjectPdfMemo[]
+}
+
+export type ProjectPdfSectionNode = {
+  title: string
+  description?: string | null
+  depth: number
+  attachments?: ProjectPdfAttachment[]
+  tasks: ProjectPdfTask[]
+  children?: ProjectPdfSectionNode[]
+}
+
+export type GenerateProjectPdfInput = {
+  projectTitle: string
+  projectStatus: string
+  projectNote?: string | null
+  ownerName?: string | null
+  mode: 'task' | 'section' | 'project'
+  task?: ProjectPdfTask | null
+  sections?: ProjectPdfSectionNode[]
+  includeAttachments: boolean
+  locale: ProjectPdfLocale
+}
+
+type Labels = {
+  reportTitleTask: string
+  reportTitleSection: string
+  reportTitleProject: string
+  project: string
+  status: string
+  owner: string
+  generatedAt: string
+  note: string
+  section: string
+  description: string
+  task: string
+  content: string
+  schedule: string
+  assignees: string
+  attachments: string
+  memos: string
+  noContent: string
+  embedded: string
+  listedOnly: string
+  uncategorized: string
+  statusTodo: string
+  statusDoing: string
+  statusDone: string
+}
+
+function labelsFor(locale: ProjectPdfLocale): Labels {
+  if (locale === 'en') {
+    return {
+      reportTitleTask: 'Task report',
+      reportTitleSection: 'Section report',
+      reportTitleProject: 'Project report',
+      project: 'Project',
+      status: 'Status',
+      owner: 'Owner',
+      generatedAt: 'Generated',
+      note: 'Note',
+      section: 'Section',
+      description: 'Description',
+      task: 'Task',
+      content: 'Content',
+      schedule: 'Schedule',
+      assignees: 'Assignees',
+      attachments: 'Attachments',
+      memos: 'Notes',
+      noContent: '—',
+      embedded: 'embedded',
+      listedOnly: 'listed',
+      uncategorized: 'Uncategorized',
+      statusTodo: 'To do',
+      statusDoing: 'Doing',
+      statusDone: 'Done',
+    }
+  }
+  return {
+    reportTitleTask: '事項報告',
+    reportTitleSection: '分組報告',
+    reportTitleProject: '項目報告',
+    project: '項目',
+    status: '狀態',
+    owner: '負責人',
+    generatedAt: '產生時間',
+    note: '備註',
+    section: '分組',
+    description: '說明',
+    task: '事項',
+    content: '內容',
+    schedule: '時段',
+    assignees: '負責人',
+    attachments: '附件',
+    memos: '事項備註',
+    noContent: '—',
+    embedded: '已嵌入',
+    listedOnly: '僅列表',
+    uncategorized: '未分類',
+    statusTodo: '待辦',
+    statusDoing: '進行中',
+    statusDone: '已完成',
+  }
+}
+
+function toBinaryStr(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i])
+  return bin
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0')
+}
+
+function formatDateTime(value?: Date | string | null, locale: ProjectPdfLocale = 'zh') {
+  if (!value) return ''
+  const d = typeof value === 'string' ? new Date(value) : value
+  if (Number.isNaN(d.getTime())) return ''
+  const base = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return locale === 'en' ? base : base
+}
+
+function scheduleLabel(
+  task: ProjectPdfTask,
+  locale: ProjectPdfLocale
+) {
+  const start = formatDateTime(task.startAt, locale)
+  const end = formatDateTime(task.dueDate, locale)
+  if (start && end) return `${start} – ${end}`
+  return end || start || ''
+}
+
+function statusLabel(status: string, L: Labels) {
+  if (status === 'DOING') return L.statusDoing
+  if (status === 'DONE') return L.statusDone
+  return L.statusTodo
+}
+
+function ensureSpace(
+  doc: jsPDF,
+  y: number,
+  need: number,
+  margin: number,
+  pageH: number
+) {
+  if (y + need > pageH - margin) {
+    doc.addPage()
+    return margin
+  }
+  return y
+}
+
+function writeWrapped(
+  doc: jsPDF,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number
+) {
+  const lines = doc.splitTextToSize(text || '', maxWidth) as string[]
+  doc.text(lines, x, y)
+  return y + lines.length * lineHeight
+}
+
+function attachmentLabel(att: ProjectPdfAttachment, index: number, locale: ProjectPdfLocale) {
+  const name = att.note?.trim() || (locale === 'en' ? `Attachment ${index + 1}` : `附件 ${index + 1}`)
+  const size =
+    typeof att.size === 'number' && att.size > 0
+      ? ` (${Math.max(1, Math.round(att.size / 1024))} KB)`
+      : ''
+  return `${name}${size}`
+}
+
+function tryEmbedImage(
+  doc: jsPDF,
+  fileUrl: string,
+  x: number,
+  y: number,
+  maxW: number,
+  maxH: number
+): number {
+  if (!fileUrl?.startsWith('data:image/')) return 0
+  const isJpeg = fileUrl.startsWith('data:image/jpeg') || fileUrl.startsWith('data:image/jpg')
+  const isPng = fileUrl.startsWith('data:image/png')
+  if (!isJpeg && !isPng) return 0
+  try {
+    const format = isPng ? 'PNG' : 'JPEG'
+    const props = doc.getImageProperties(fileUrl)
+    const ratio = Math.min(maxW / props.width, maxH / props.height, 1)
+    const w = props.width * ratio
+    const h = props.height * ratio
+    doc.addImage(fileUrl, format, x, y, w, h)
+    return h + 4
+  } catch {
+    return 0
+  }
+}
+
+function drawAttachments(
+  doc: jsPDF,
+  attachments: ProjectPdfAttachment[] | undefined,
+  includeAttachments: boolean,
+  x: number,
+  y: number,
+  maxWidth: number,
+  margin: number,
+  pageH: number,
+  L: Labels,
+  locale: ProjectPdfLocale,
+  fontReg: string
+) {
+  if (!includeAttachments || !attachments || attachments.length === 0) return y
+  y = ensureSpace(doc, y, 20, margin, pageH)
+  doc.setFont(fontReg, 'bold')
+  doc.setFontSize(10)
+  doc.text(L.attachments, x, y)
+  y += 12
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(9)
+
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i]
+    y = ensureSpace(doc, y, 18, margin, pageH)
+    const label = attachmentLabel(att, i, locale)
+    const embeddedH = tryEmbedImage(doc, att.fileUrl, x, y, Math.min(120, maxWidth), 70)
+    if (embeddedH > 0) {
+      y += embeddedH
+      y = writeWrapped(doc, `• ${label} (${L.embedded})`, x, y, maxWidth, 11)
+      y += 4
+    } else {
+      y = writeWrapped(doc, `• ${label} (${L.listedOnly})`, x, y, maxWidth, 11)
+      y += 2
+    }
+  }
+  return y + 4
+}
+
+function drawTaskBlock(
+  doc: jsPDF,
+  task: ProjectPdfTask,
+  includeAttachments: boolean,
+  x: number,
+  y: number,
+  maxWidth: number,
+  margin: number,
+  pageH: number,
+  L: Labels,
+  locale: ProjectPdfLocale,
+  fontReg: string,
+  fontBold: string
+) {
+  y = ensureSpace(doc, y, 28, margin, pageH)
+  doc.setFont(fontBold, 'bold')
+  doc.setFontSize(12)
+  y = writeWrapped(doc, `${L.task}: ${task.title}`, x, y, maxWidth, 14)
+  y += 4
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(9)
+
+  const meta: string[] = [
+    `${L.status}: ${statusLabel(task.status, L)}`,
+  ]
+  if (task.sectionPath) meta.push(`${L.section}: ${task.sectionPath}`)
+  const schedule = scheduleLabel(task, locale)
+  if (schedule) meta.push(`${L.schedule}: ${schedule}`)
+  if (task.assignees && task.assignees.length > 0) {
+    meta.push(`${L.assignees}: ${task.assignees.join(', ')}`)
+  }
+  for (const line of meta) {
+    y = ensureSpace(doc, y, 12, margin, pageH)
+    y = writeWrapped(doc, line, x, y, maxWidth, 11)
+  }
+
+  y += 4
+  doc.setFont(fontBold, 'bold')
+  doc.text(L.content, x, y)
+  y += 11
+  doc.setFont(fontReg, 'normal')
+  y = writeWrapped(doc, task.content?.trim() || L.noContent, x, y, maxWidth, 11)
+  y += 6
+
+  y = drawAttachments(
+    doc,
+    task.attachments,
+    includeAttachments,
+    x,
+    y,
+    maxWidth,
+    margin,
+    pageH,
+    L,
+    locale,
+    fontReg
+  )
+
+  if (task.memos && task.memos.length > 0) {
+    y = ensureSpace(doc, y, 16, margin, pageH)
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(10)
+    doc.text(L.memos, x, y)
+    y += 12
+    doc.setFont(fontReg, 'normal')
+    doc.setFontSize(9)
+    const memos = task.memos.slice(0, 8)
+    for (const m of memos) {
+      y = ensureSpace(doc, y, 16, margin, pageH)
+      const head = `${m.author || '—'} · ${formatDateTime(m.createdAt, locale)}`
+      y = writeWrapped(doc, head, x, y, maxWidth, 11)
+      y = writeWrapped(doc, m.content || L.noContent, x + 6, y, maxWidth - 6, 11)
+      y += 4
+    }
+  }
+
+  return y + 8
+}
+
+function drawSectionNode(
+  doc: jsPDF,
+  section: ProjectPdfSectionNode,
+  includeAttachments: boolean,
+  x: number,
+  y: number,
+  maxWidth: number,
+  margin: number,
+  pageH: number,
+  L: Labels,
+  locale: ProjectPdfLocale,
+  fontReg: string,
+  fontBold: string
+) {
+  y = ensureSpace(doc, y, 24, margin, pageH)
+  doc.setFont(fontBold, 'bold')
+  doc.setFontSize(section.depth === 0 ? 13 : 11)
+  const indent = x + section.depth * 8
+  y = writeWrapped(doc, `${L.section}: ${section.title}`, indent, y, maxWidth - section.depth * 8, 14)
+  y += 2
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(9)
+  if (section.description?.trim()) {
+    doc.setFont(fontBold, 'bold')
+    doc.text(L.description, indent, y)
+    y += 11
+    doc.setFont(fontReg, 'normal')
+    y = writeWrapped(doc, section.description.trim(), indent, y, maxWidth - section.depth * 8, 11)
+    y += 4
+  }
+
+  y = drawAttachments(
+    doc,
+    section.attachments,
+    includeAttachments,
+    indent,
+    y,
+    maxWidth - section.depth * 8,
+    margin,
+    pageH,
+    L,
+    locale,
+    fontReg
+  )
+
+  for (const task of section.tasks) {
+    y = drawTaskBlock(
+      doc,
+      task,
+      includeAttachments,
+      indent,
+      y,
+      maxWidth - section.depth * 8,
+      margin,
+      pageH,
+      L,
+      locale,
+      fontReg,
+      fontBold
+    )
+  }
+
+  for (const child of section.children || []) {
+    y = drawSectionNode(
+      doc,
+      child,
+      includeAttachments,
+      x,
+      y,
+      maxWidth,
+      margin,
+      pageH,
+      L,
+      locale,
+      fontReg,
+      fontBold
+    )
+  }
+  return y
+}
+
+export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
+  const locale = input.locale === 'en' ? 'en' : 'zh'
+  const L = labelsFor(locale)
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', compress: true })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const margin = 40
+  const maxWidth = pageW - margin * 2
+  let fontReg = 'helvetica'
+  let fontBold = 'helvetica'
+  let cjk = false
+
+  try {
+    const fonts = loadChineseFonts()
+    doc.addFileToVFS(`${fonts.regularFamily}.ttf`, toBinaryStr(fonts.regular))
+    doc.addFont(`${fonts.regularFamily}.ttf`, fonts.regularFamily, 'normal')
+    // Reuse regular for bold — some bold TTFs (e.g. msyh) fail jspdf registration in Node.
+    doc.addFont(`${fonts.regularFamily}.ttf`, fonts.regularFamily, 'bold')
+    fontReg = fonts.regularFamily
+    fontBold = fonts.regularFamily
+    cjk = true
+  } catch (e) {
+    console.error('[project-pdf] CJK font failed, fallback helvetica:', e)
+    fontReg = 'helvetica'
+    fontBold = 'helvetica'
+    cjk = false
+  }
+  void cjk
+
+  const title =
+    input.mode === 'task'
+      ? L.reportTitleTask
+      : input.mode === 'section'
+        ? L.reportTitleSection
+        : L.reportTitleProject
+
+  let y = margin
+  doc.setFillColor(236, 242, 255)
+  doc.rect(0, 0, pageW, 52, 'F')
+  doc.setFont(fontBold, 'bold')
+  doc.setFontSize(16)
+  doc.setTextColor(0, 122, 255)
+  doc.text(title, pageW / 2, 28, { align: 'center' })
+  doc.setFont(fontReg, 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(60, 60, 70)
+  doc.text(input.projectTitle, pageW / 2, 44, { align: 'center' })
+  y = 68
+  doc.setTextColor(30, 30, 30)
+
+  const headerLines = [
+    `${L.project}: ${input.projectTitle}`,
+    `${L.status}: ${input.projectStatus}`,
+    input.ownerName ? `${L.owner}: ${input.ownerName}` : '',
+    `${L.generatedAt}: ${formatDateTime(new Date(), locale)}`,
+  ].filter(Boolean)
+  for (const line of headerLines) {
+    y = writeWrapped(doc, line, margin, y, maxWidth, 12)
+  }
+  if (input.projectNote?.trim()) {
+    y += 4
+    doc.setFont(fontBold, 'bold')
+    doc.text(L.note, margin, y)
+    y += 12
+    doc.setFont(fontReg, 'normal')
+    y = writeWrapped(doc, input.projectNote.trim(), margin, y, maxWidth, 11)
+  }
+  y += 10
+
+  if (input.mode === 'task' && input.task) {
+    drawTaskBlock(
+      doc,
+      input.task,
+      input.includeAttachments,
+      margin,
+      y,
+      maxWidth,
+      margin,
+      pageH,
+      L,
+      locale,
+      fontReg,
+      fontBold
+    )
+  } else {
+    for (const section of input.sections || []) {
+      y = drawSectionNode(
+        doc,
+        section,
+        input.includeAttachments,
+        margin,
+        y,
+        maxWidth,
+        margin,
+        pageH,
+        L,
+        locale,
+        fontReg,
+        fontBold
+      )
+    }
+  }
+
+  return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer)
+}
