@@ -52,10 +52,17 @@ const taskDetailInclude = {
       },
     },
   },
+  /** Direct task document bucket (exclude memo-thread attachments). */
   attachments: {
+    where: { memoId: null },
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
   },
+}
+
+const sectionAttachmentInclude = {
+  orderBy: { createdAt: 'desc' as const },
+  include: { uploader: { select: { roleName: true } } },
 }
 
 const projectInclude = {
@@ -70,8 +77,10 @@ const projectInclude = {
     where: { parentId: null },
     orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
     include: {
+      attachments: sectionAttachmentInclude,
       children: {
         orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+        include: { attachments: sectionAttachmentInclude },
       },
     },
   },
@@ -399,8 +408,10 @@ export async function getProjectDetail(projectId: string) {
           where: { parentId: null },
           orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
           include: {
+            attachments: sectionAttachmentInclude,
             children: {
               orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+              include: { attachments: sectionAttachmentInclude },
             },
           },
         },
@@ -870,7 +881,7 @@ export async function setProjectMembers(projectId: string, memberIds: string[]) 
 
 export async function createProjectSection(
   projectId: string,
-  input: { title: string; parentId?: string | null }
+  input: { title: string; parentId?: string | null; description?: string | null }
 ) {
   try {
     await assertProjectMember(projectId)
@@ -900,6 +911,7 @@ export async function createProjectSection(
         projectId,
         parentId,
         title,
+        description: input.description?.trim() || null,
         sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
       },
     })
@@ -912,7 +924,7 @@ export async function createProjectSection(
 
 export async function updateProjectSection(
   sectionId: string,
-  input: { title: string }
+  input: { title?: string; description?: string | null }
 ) {
   try {
     const section = await prisma.projectSection.findUnique({ where: { id: sectionId } })
@@ -921,12 +933,22 @@ export async function updateProjectSection(
     if (!section) return { success: false, error: t('projectSectionNotFound') }
     await assertProjectMember(section.projectId)
 
-    const title = String(input.title || '').trim()
-    if (!title) return { success: false, error: t('projectSectionTitleRequired') }
+    const data: { title?: string; description?: string | null } = {}
+    if (input.title !== undefined) {
+      const title = String(input.title || '').trim()
+      if (!title) return { success: false, error: t('projectSectionTitleRequired') }
+      data.title = title
+    }
+    if (input.description !== undefined) {
+      data.description = input.description?.trim() || null
+    }
+    if (Object.keys(data).length === 0) {
+      return { success: false, error: t('projectSectionTitleRequired') }
+    }
 
     await prisma.projectSection.update({
       where: { id: sectionId },
-      data: { title },
+      data,
     })
     revalidateProjects(section.projectId)
     return { success: true }
@@ -968,6 +990,7 @@ export async function createProjectTask(
   projectId: string,
   input: {
     title: string
+    content?: string | null
     status?: ProjectTaskStatus
     dueDate?: string | null
     reminderDays?: number
@@ -997,12 +1020,18 @@ export async function createProjectTask(
       )
     )
 
+    const content =
+      input.content !== undefined
+        ? input.content?.trim() || null
+        : input.note?.trim() || null
+
     await prisma.$transaction(async (tx) => {
       const created = await tx.projectTask.create({
         data: {
           projectId,
           sectionId,
           title,
+          content,
           status: input.status || 'TODO',
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
           reminderDays: Number(input.reminderDays ?? 7) || 7,
@@ -1033,6 +1062,7 @@ export async function updateProjectTask(
   taskId: string,
   input: {
     title: string
+    content?: string | null
     status: ProjectTaskStatus
     dueDate?: string | null
     reminderDays?: number
@@ -1074,7 +1104,10 @@ export async function updateProjectTask(
           status: input.status,
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
           reminderDays: Number(input.reminderDays ?? 7) || 7,
-          note: input.note?.trim() || null,
+          ...(input.content !== undefined
+            ? { content: input.content?.trim() || null }
+            : {}),
+          ...(input.note !== undefined ? { note: input.note?.trim() || null } : {}),
           ...(input.sectionId !== undefined
             ? { sectionId: input.sectionId ? String(input.sectionId) : null }
             : {}),
@@ -1207,6 +1240,64 @@ type AttachmentPayload = {
   url: string
   size: number
   note?: string
+}
+
+export async function addProjectTaskAttachment(
+  taskId: string,
+  input: AttachmentPayload
+) {
+  try {
+    const task = await prisma.projectTask.findUnique({ where: { id: taskId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!task) return { success: false, error: t('projectTaskNotFound') }
+    const { session } = await assertProjectMember(task.projectId)
+    if (!input?.url) return { success: false, error: t('ocrSelectAttachmentFirst') }
+
+    await prisma.attachment.create({
+      data: {
+        fileUrl: input.url,
+        size: Number(input.size) || 0,
+        note: input.note || null,
+        uploaderId: session.userId,
+        projectId: task.projectId,
+        projectTaskId: taskId,
+      },
+    })
+    revalidateProjects(task.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function addProjectSectionAttachment(
+  sectionId: string,
+  input: AttachmentPayload
+) {
+  try {
+    const section = await prisma.projectSection.findUnique({ where: { id: sectionId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!section) return { success: false, error: t('projectSectionNotFound') }
+    const { session } = await assertProjectMember(section.projectId)
+    if (!input?.url) return { success: false, error: t('ocrSelectAttachmentFirst') }
+
+    await prisma.attachment.create({
+      data: {
+        fileUrl: input.url,
+        size: Number(input.size) || 0,
+        note: input.note || null,
+        uploaderId: session.userId,
+        projectId: section.projectId,
+        projectSectionId: sectionId,
+      },
+    })
+    revalidateProjects(section.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
 }
 
 export async function addProjectTaskMemo(
