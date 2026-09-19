@@ -57,6 +57,7 @@ type ProjectTask = {
   title: string
   content?: string | null
   status: string
+  startAt?: string | Date | null
   dueDate?: string | Date | null
   reminderDays: number
   note?: string | null
@@ -181,6 +182,15 @@ function datetimeLabel(value?: string | Date | null) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
+function taskScheduleLabel(task: { startAt?: string | Date | null; dueDate?: string | Date | null }) {
+  const start = datetimeLabel(task.startAt)
+  const end = datetimeLabel(task.dueDate)
+  if (start && end) return `${start} – ${end}`
+  if (end) return end
+  if (start) return start
+  return ''
+}
+
 function getTaskAssigneeIds(task: ProjectTask) {
   if (task.assignees && task.assignees.length > 0) {
     return task.assignees.map((a) => a.userId)
@@ -222,6 +232,7 @@ export default function ProjectDetailClient({
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskContent, setTaskContent] = useState('')
+  const [taskStartAt, setTaskStartAt] = useState('')
   const [taskDue, setTaskDue] = useState('')
   const [taskSectionId, setTaskSectionId] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
@@ -229,6 +240,8 @@ export default function ProjectDetailClient({
   const [taskMemoDraft, setTaskMemoDraft] = useState('')
   const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
   const [taskContentDrafts, setTaskContentDrafts] = useState<Record<string, string>>({})
+  const [taskStartDrafts, setTaskStartDrafts] = useState<Record<string, string>>({})
+  const [taskDueDrafts, setTaskDueDrafts] = useState<Record<string, string>>({})
   const [sectionDescDrafts, setSectionDescDrafts] = useState<Record<string, string>>({})
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>(null)
   const [assigneeOverrides, setAssigneeOverrides] = useState<Record<string, string[]>>({})
@@ -728,6 +741,15 @@ export default function ProjectDetailClient({
                 className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
               />
               <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
+                <input
+                  type="datetime-local"
+                  value={taskStartAt}
+                  onChange={(e) => setTaskStartAt(e.target.value)}
+                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                />
+              </div>
+              <div>
                 <div className="mb-1 text-xs font-medium text-gray-500">{t('projectTaskDueAt')}</div>
                 <input
                   type="datetime-local"
@@ -735,6 +757,7 @@ export default function ProjectDetailClient({
                   onChange={(e) => setTaskDue(e.target.value)}
                   className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
                 />
+                <div className="mt-1 text-[11px] text-gray-400">{t('projectTaskTimeOptional')}</div>
               </div>
               <select
                 value={taskSectionId}
@@ -776,6 +799,7 @@ export default function ProjectDetailClient({
                     createProjectTask(project.id, {
                       title: taskTitle,
                       content: taskContent || null,
+                      startAt: taskStartAt || null,
                       dueDate: taskDue || null,
                       sectionId: taskSectionId || null,
                       assigneeIds: taskAssigneeIds,
@@ -784,6 +808,7 @@ export default function ProjectDetailClient({
                   if (ok) {
                     setTaskTitle('')
                     setTaskContent('')
+                    setTaskStartAt('')
                     setTaskDue('')
                     setTaskAssigneeIds([])
                   }
@@ -998,6 +1023,14 @@ export default function ProjectDetailClient({
                             ...prev,
                             [task.id]: task.content || '',
                           }))
+                          setTaskStartDrafts((prev) => ({
+                            ...prev,
+                            [task.id]: datetimeInput(task.startAt),
+                          }))
+                          setTaskDueDrafts((prev) => ({
+                            ...prev,
+                            [task.id]: datetimeInput(task.dueDate),
+                          }))
                         }}
                       >
                         <div className="flex items-center gap-2">
@@ -1018,7 +1051,7 @@ export default function ProjectDetailClient({
                             ) : null}
                             <div className="mt-1 text-xs text-gray-500">
                               {taskStatusLabel(task.status)}
-                              {task.dueDate ? ` · ${datetimeLabel(task.dueDate)}` : ''}
+                              {taskScheduleLabel(task) ? ` · ${taskScheduleLabel(task)}` : ''}
                               {names ? ` · ${names}` : ''}
                               {task.attachments && task.attachments.length > 0
                                 ? ` · ${t('attachment')} ${task.attachments.length}`
@@ -1044,6 +1077,7 @@ export default function ProjectDetailClient({
                                   updateProjectTask(task.id, {
                                     title: task.title,
                                     status: task.status === 'TODO' ? 'DOING' : 'DONE',
+                                    startAt: datetimeInput(task.startAt) || null,
                                     dueDate: datetimeInput(task.dueDate) || null,
                                     reminderDays: task.reminderDays,
                                     note: task.note || undefined,
@@ -1106,6 +1140,7 @@ export default function ProjectDetailClient({
                                         updateProjectTask(task.id, {
                                           title: task.title,
                                           status: task.status as any,
+                                          startAt: datetimeInput(task.startAt) || null,
                                           dueDate: datetimeInput(task.dueDate) || null,
                                           reminderDays: task.reminderDays,
                                           note: task.note || undefined,
@@ -1149,6 +1184,7 @@ export default function ProjectDetailClient({
                                   updateProjectTask(task.id, {
                                     title: task.title,
                                     status: task.status as any,
+                                    startAt: datetimeInput(task.startAt) || null,
                                     dueDate: datetimeInput(task.dueDate) || null,
                                     reminderDays: task.reminderDays,
                                     note: task.note || undefined,
@@ -1186,26 +1222,46 @@ export default function ProjectDetailClient({
                                 placeholder={t('projectTaskContentPlaceholder')}
                                 className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
                               />
-                              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                <input
-                                  type="datetime-local"
-                                  value={datetimeInput(task.dueDate)}
-                                  disabled={busy}
-                                  onChange={(e) =>
-                                    run(() =>
-                                      updateProjectTask(task.id, {
-                                        title: task.title,
-                                        status: task.status as any,
-                                        dueDate: e.target.value || null,
-                                        reminderDays: task.reminderDays,
-                                        content:
-                                          taskContentDrafts[task.id] ?? task.content ?? null,
-                                        assigneeIds: getTaskAssigneeIds(task),
-                                      })
-                                    )
-                                  }
-                                  className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                                />
+                              <div className="mt-2 space-y-2">
+                                <div>
+                                  <div className="mb-1 text-xs font-medium text-gray-500">
+                                    {t('projectTaskStartAt')}
+                                  </div>
+                                  <input
+                                    type="datetime-local"
+                                    value={
+                                      taskStartDrafts[task.id] ?? datetimeInput(task.startAt)
+                                    }
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      setTaskStartDrafts((prev) => ({
+                                        ...prev,
+                                        [task.id]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <div className="mb-1 text-xs font-medium text-gray-500">
+                                    {t('projectTaskDueAt')}
+                                  </div>
+                                  <input
+                                    type="datetime-local"
+                                    value={taskDueDrafts[task.id] ?? datetimeInput(task.dueDate)}
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      setTaskDueDrafts((prev) => ({
+                                        ...prev,
+                                        [task.id]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                                  />
+                                  <div className="mt-1 text-[11px] text-gray-400">
+                                    {t('projectTaskTimeOptional')}
+                                  </div>
+                                </div>
                                 <button
                                   type="button"
                                   disabled={busy}
@@ -1214,7 +1270,14 @@ export default function ProjectDetailClient({
                                       updateProjectTask(task.id, {
                                         title: task.title,
                                         status: task.status as any,
-                                        dueDate: datetimeInput(task.dueDate) || null,
+                                        startAt:
+                                          (taskStartDrafts[task.id] ??
+                                            datetimeInput(task.startAt)) ||
+                                          null,
+                                        dueDate:
+                                          (taskDueDrafts[task.id] ??
+                                            datetimeInput(task.dueDate)) ||
+                                          null,
                                         reminderDays: task.reminderDays,
                                         content:
                                           taskContentDrafts[task.id] ?? task.content ?? null,
@@ -1222,7 +1285,7 @@ export default function ProjectDetailClient({
                                       })
                                     )
                                   }
-                                  className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                                  className="w-full rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 sm:w-auto"
                                 >
                                   {t('saveProjectTaskContent')}
                                 </button>
@@ -1231,9 +1294,9 @@ export default function ProjectDetailClient({
                           ) : (
                             <div className="whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-sm text-gray-800 shadow-sm">
                               {task.content || '—'}
-                              {task.dueDate ? (
+                              {taskScheduleLabel(task) ? (
                                 <div className="mt-2 text-xs text-gray-500">
-                                  {t('projectTaskDueAt')}: {datetimeLabel(task.dueDate)}
+                                  {taskScheduleLabel(task)}
                                 </div>
                               ) : null}
                             </div>

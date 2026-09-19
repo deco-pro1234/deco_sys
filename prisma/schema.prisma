@@ -566,6 +566,9 @@ model ProjectTask {
   /** Body / details for the task (distinct from memo timeline). */
   content      String?
   status       String   @default("TODO") // TODO | DOING | DONE
+  /** Optional schedule start; use with dueDate as end. */
+  startAt      DateTime?
+  /** Deadline or schedule end (optional). */
   dueDate      DateTime?
   reminderDays Int      @default(7)
   /** @deprecated prefer content; kept for migration compatibility */
@@ -591,6 +594,7 @@ model ProjectTask {
   taskAccesses ProjectTaskAccess[]
 
   @@index([projectId, status, dueDate])
+  @@index([projectId, startAt])
   @@index([sectionId])
 }
 
