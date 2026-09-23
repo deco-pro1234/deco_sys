@@ -94,3 +94,12 @@ export function formatDatetimeLabelHongKong(
   const p = hongKongParts(d)
   return `${p.year}-${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`
 }
+
+/** Calendar date `YYYY-MM-DD` in Hong Kong. */
+export function formatDateHongKong(value?: string | Date | null): string {
+  if (!value) return ''
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = hongKongParts(d)
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`
+}

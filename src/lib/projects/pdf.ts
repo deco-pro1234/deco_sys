@@ -2,6 +2,10 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { loadChineseFonts } from '@/lib/fonts/loadChineseFont'
 import { drawBrandHeader } from '@/lib/projects/pdfBrand'
+import {
+  formatDateHongKong,
+  formatDatetimeLabelHongKong,
+} from '@/lib/datetime/hongKong'
 
 export type ProjectPdfLocale = 'zh' | 'en'
 
@@ -271,12 +275,8 @@ function pad2(n: number) {
   return String(n).padStart(2, '0')
 }
 
-function formatDateTime(value?: Date | string | null, locale: ProjectPdfLocale = 'zh') {
-  if (!value) return ''
-  const d = typeof value === 'string' ? new Date(value) : value
-  if (Number.isNaN(d.getTime())) return ''
-  const base = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-  return locale === 'en' ? base : base
+function formatDateTime(value?: Date | string | null, _locale: ProjectPdfLocale = 'zh') {
+  return formatDatetimeLabelHongKong(value)
 }
 
 function scheduleLabel(
@@ -445,12 +445,7 @@ function drawMetaSummaryCards(
   fontReg: string,
   fontBold: string
 ) {
-  const formatDay = (value?: Date | string | null) => {
-    if (!value) return ''
-    const d = typeof value === 'string' ? new Date(value) : value
-    if (Number.isNaN(d.getTime())) return ''
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-  }
+  const formatDay = (value?: Date | string | null) => formatDateHongKong(value)
 
   const cards: Array<{ label: string; value: string; accent: Rgb; soft: Rgb }> = [
     { label: L.status, value: input.projectStatus, accent: COLORS.brand, soft: COLORS.brandSoft },
@@ -1001,12 +996,7 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
   let y = contentTop
   doc.setTextColor(30, 30, 30)
 
-  const formatDay = (value?: Date | string | null) => {
-    if (!value) return ''
-    const d = typeof value === 'string' ? new Date(value) : value
-    if (Number.isNaN(d.getTime())) return ''
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-  }
+  const formatDay = (value?: Date | string | null) => formatDateHongKong(value)
 
   const useRichMeta =
     input.mode === 'sectionList' ||
