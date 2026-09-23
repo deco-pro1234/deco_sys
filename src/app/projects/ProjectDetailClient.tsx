@@ -36,6 +36,10 @@ import {
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import { normalizePhoneE164 } from '@/lib/whatsapp/phone'
+import {
+  formatDatetimeLabelHongKong,
+  formatDatetimeLocalHongKong,
+} from '@/lib/datetime/hongKong'
 import ProjectMemberPicker, { type ProjectMemberPick } from './ProjectMemberPicker'
 
 type ContactProfile = {
@@ -202,24 +206,14 @@ function dayInput(value?: string | Date | null) {
   return d.toISOString().slice(0, 10)
 }
 
-function pad2(n: number) {
-  return String(n).padStart(2, '0')
-}
-
-/** Local datetime for `<input type="datetime-local">`. Legacy date-only values show 00:00. */
+/** Local datetime for `<input type="datetime-local">` (Hong Kong wall clock). */
 function datetimeInput(value?: string | Date | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return formatDatetimeLocalHongKong(value)
 }
 
-/** Display due datetime for member lists. */
+/** Display due datetime for member lists (Hong Kong wall clock). */
 function datetimeLabel(value?: string | Date | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return formatDatetimeLabelHongKong(value)
 }
 
 function taskScheduleLabel(task: { startAt?: string | Date | null; dueDate?: string | Date | null }) {
@@ -229,6 +223,28 @@ function taskScheduleLabel(task: { startAt?: string | Date | null; dueDate?: str
   if (end) return end
   if (start) return start
   return ''
+}
+
+/** Latest end (or start) among same-section siblings — for consecutive scheduling. */
+function latestSiblingEndAt(
+  tasks: ProjectTask[],
+  sectionId: string | null | undefined
+): string | Date | null {
+  const key = sectionId || ''
+  let latest: string | Date | null = null
+  let latestMs = -Infinity
+  for (const task of tasks) {
+    if ((task.sectionId || '') !== key) continue
+    const end = task.dueDate || task.startAt
+    if (!end) continue
+    const ms = new Date(end).getTime()
+    if (Number.isNaN(ms)) continue
+    if (ms >= latestMs) {
+      latestMs = ms
+      latest = end
+    }
+  }
+  return latest
 }
 
 function getTaskAssigneeIds(task: ProjectTask) {
@@ -1277,7 +1293,21 @@ export default function ProjectDetailClient({
                 className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
               />
               <div>
-                <div className="mb-1 text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const prev = latestSiblingEndAt(project.tasks || [], taskSectionId || null)
+                      if (!prev) return
+                      setTaskStartAt(datetimeInput(prev))
+                    }}
+                    className="text-[11px] font-semibold text-[#007AFF] disabled:opacity-50"
+                  >
+                    {t('projectTaskContinueFromPrevious')}
+                  </button>
+                </div>
                 <input
                   type="datetime-local"
                   value={taskStartAt}
@@ -1297,7 +1327,14 @@ export default function ProjectDetailClient({
               </div>
               <select
                 value={taskSectionId}
-                onChange={(e) => setTaskSectionId(e.target.value)}
+                onChange={(e) => {
+                  const nextSection = e.target.value
+                  setTaskSectionId(nextSection)
+                  if (!taskStartAt) {
+                    const prev = latestSiblingEndAt(project.tasks || [], nextSection || null)
+                    if (prev) setTaskStartAt(datetimeInput(prev))
+                  }
+                }}
                 className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
               >
                 {sectionOptions.map((opt) => (
