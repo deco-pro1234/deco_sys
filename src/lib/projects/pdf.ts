@@ -271,10 +271,6 @@ function toBinaryStr(bytes: Uint8Array): string {
   return bin
 }
 
-function pad2(n: number) {
-  return String(n).padStart(2, '0')
-}
-
 function formatDateTime(value?: Date | string | null, _locale: ProjectPdfLocale = 'zh') {
   return formatDatetimeLabelHongKong(value)
 }
