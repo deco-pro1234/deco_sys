@@ -13,6 +13,7 @@ import {
 } from '@/lib/access'
 import { computeProjectCompletion, taskCompletionPercent } from '@/lib/projects/completion'
 import { normalizeContactPhoneInput } from '@/lib/whatsapp/phoneSync'
+import { parseDatetimeLocalHongKong } from '@/lib/datetime/hongKong'
 import { randomUUID } from 'crypto'
 
 export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'DONE' | 'ARCHIVED'
@@ -1497,12 +1498,12 @@ export async function createProjectTask(
       input.sectionId === undefined ? null : input.sectionId ? String(input.sectionId) : null
     await assertValidTaskSection(projectId, sectionId)
 
-    const startAt = input.startAt ? new Date(input.startAt) : null
-    const dueDate = input.dueDate ? new Date(input.dueDate) : null
-    if (startAt && Number.isNaN(startAt.getTime())) {
+    const startAt = input.startAt ? parseDatetimeLocalHongKong(input.startAt) : null
+    const dueDate = input.dueDate ? parseDatetimeLocalHongKong(input.dueDate) : null
+    if (input.startAt && !startAt) {
       return { success: false, error: t('projectTaskTimeInvalid') }
     }
-    if (dueDate && Number.isNaN(dueDate.getTime())) {
+    if (input.dueDate && !dueDate) {
       return { success: false, error: t('projectTaskTimeInvalid') }
     }
     if (startAt && dueDate && startAt.getTime() > dueDate.getTime()) {
@@ -1593,19 +1594,19 @@ export async function updateProjectTask(
     const nextStartAt =
       input.startAt !== undefined
         ? input.startAt
-          ? new Date(input.startAt)
+          ? parseDatetimeLocalHongKong(input.startAt)
           : null
         : task.startAt
     const nextDueDate =
       input.dueDate !== undefined
         ? input.dueDate
-          ? new Date(input.dueDate)
+          ? parseDatetimeLocalHongKong(input.dueDate)
           : null
         : task.dueDate
-    if (nextStartAt && Number.isNaN(nextStartAt.getTime())) {
+    if (input.startAt && input.startAt !== null && input.startAt !== '' && !nextStartAt) {
       return { success: false, error: t('projectTaskTimeInvalid') }
     }
-    if (nextDueDate && Number.isNaN(nextDueDate.getTime())) {
+    if (input.dueDate && input.dueDate !== null && input.dueDate !== '' && !nextDueDate) {
       return { success: false, error: t('projectTaskTimeInvalid') }
     }
     if (nextStartAt && nextDueDate && nextStartAt.getTime() > nextDueDate.getTime()) {
