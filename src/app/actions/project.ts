@@ -2026,6 +2026,9 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
             reminderDays: project.reminderDays,
             href: `/projects/${project.id}`,
             kind: 'project_start',
+            projectId: project.id,
+            projectTitle: project.title,
+            taskId: null,
           })
         }
       }
@@ -2043,13 +2046,16 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
             reminderDays: project.reminderDays,
             href: `/projects/${project.id}`,
             kind: 'project_end',
+            projectId: project.id,
+            projectTitle: project.title,
+            taskId: null,
           })
         }
       }
 
       for (const task of project.tasks) {
         if (!isFull && !grantedTaskIds.has(task.id)) continue
-        const taskTitle = `${project.title} · ${task.title}`
+        const taskHref = `/projects/${project.id}?task=${encodeURIComponent(task.id)}`
 
         if (task.startAt) {
           const daysDiff = getDaysDiff(task.startAt)
@@ -2057,13 +2063,16 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
           if (bucket) {
             items.push({
               id: `task-${task.id}-start`,
-              title: taskTitle,
+              title: task.title,
               targetDate: task.startAt.toISOString(),
               bucket,
               daysDiff,
               reminderDays: task.reminderDays,
-              href: `/projects/${project.id}`,
+              href: taskHref,
               kind: 'project_task_start',
+              projectId: project.id,
+              projectTitle: project.title,
+              taskId: task.id,
             })
           }
         }
@@ -2074,13 +2083,16 @@ export async function getProjectReminderItems(): Promise<ReminderItem[]> {
           if (bucket) {
             items.push({
               id: `task-${task.id}-due`,
-              title: taskTitle,
+              title: task.title,
               targetDate: task.dueDate.toISOString(),
               bucket,
               daysDiff,
               reminderDays: task.reminderDays,
-              href: `/projects/${project.id}`,
+              href: taskHref,
               kind: 'project_task_due',
+              projectId: project.id,
+              projectTitle: project.title,
+              taskId: task.id,
             })
           }
         }

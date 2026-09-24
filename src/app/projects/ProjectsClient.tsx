@@ -7,8 +7,10 @@ import { createProject } from '../actions/project'
 import AiProjectFrameworkPanel from './AiProjectFrameworkPanel'
 import ProjectMemberPicker, { type ProjectMemberPick } from './ProjectMemberPicker'
 import { PageHelpHeading } from '@/components/HelpTip'
+import ProjectRemindersGrouped from '@/components/ProjectRemindersGrouped'
 import type { ProjectCompletionStats } from '@/lib/projects/completion'
-import type { ReminderItem, ReminderKind } from '../actions/reminder'
+import type { ReminderItem } from '../actions/reminder'
+import { countReminderBuckets } from '@/lib/projects/reminderGrouping'
 
 type ProjectListItem = {
   id: string
@@ -43,28 +45,12 @@ type Props = {
 }
 
 const STATUS_KEYS = ['PLANNING', 'ACTIVE', 'DONE', 'ARCHIVED'] as const
-const REMINDER_PREVIEW = 5
 
 function dayLabel(value?: string | Date | null) {
   if (!value) return '—'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toISOString().slice(0, 10)
-}
-
-function kindLabel(kind: ReminderKind | undefined, t: (key: any) => string) {
-  switch (kind) {
-    case 'project_start':
-      return t('reminderKindProjectStart')
-    case 'project_end':
-      return t('reminderKindProjectEnd')
-    case 'project_task_start':
-      return t('reminderKindTaskStart')
-    case 'project_task_due':
-      return t('reminderKindTaskDue')
-    default:
-      return null
-  }
 }
 
 export default function ProjectsClient({
@@ -84,10 +70,8 @@ export default function ProjectsClient({
   const [contactUserId, setContactUserId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'ALL' | (typeof STATUS_KEYS)[number]>('ALL')
-  const [remindersExpanded, setRemindersExpanded] = useState(false)
-  const [reminderBucketFilter, setReminderBucketFilter] = useState<
-    'ALL' | 'overdue' | 'today' | 'upcoming'
-  >('ALL')
+  const [search, setSearch] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
 
   const memberIds = useMemo(() => selectedMembers.map((m) => m.id), [selectedMembers])
 
@@ -97,27 +81,27 @@ export default function ProjectsClient({
     }
   }, [contactUserId, memberIds])
 
-  const filtered = useMemo(() => {
-    if (filter === 'ALL') return initialProjects
-    return initialProjects.filter((p) => p.status === filter)
-  }, [filter, initialProjects])
-
-  const reminderGroups = useMemo(() => {
-    return {
-      overdue: initialReminders.filter((r) => r.bucket === 'overdue'),
-      today: initialReminders.filter((r) => r.bucket === 'today'),
-      upcoming: initialReminders.filter((r) => r.bucket === 'upcoming'),
+  const remindersByProject = useMemo(() => {
+    const map = new Map<string, ReminderItem[]>()
+    for (const item of initialReminders) {
+      const id =
+        item.projectId || item.href.match(/^\/projects\/([^/?#]+)/)?.[1] || ''
+      if (!id) continue
+      const list = map.get(id) || []
+      list.push(item)
+      map.set(id, list)
     }
+    return map
   }, [initialReminders])
 
-  const filteredReminders = useMemo(() => {
-    if (reminderBucketFilter === 'ALL') return initialReminders
-    return initialReminders.filter((r) => r.bucket === reminderBucketFilter)
-  }, [initialReminders, reminderBucketFilter])
-
-  const visibleReminders = remindersExpanded
-    ? filteredReminders
-    : filteredReminders.slice(0, REMINDER_PREVIEW)
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return initialProjects.filter((p) => {
+      if (filter !== 'ALL' && p.status !== filter) return false
+      if (q && !p.title.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [filter, initialProjects, search])
 
   const statusLabel = (s: string) => {
     const map: Record<string, string> = {
@@ -150,18 +134,9 @@ export default function ProjectsClient({
     setStartDate(new Date().toISOString().slice(0, 10))
     setSelectedMembers([])
     setContactUserId('')
+    setShowCreate(false)
     router.refresh()
     if (res.id) router.push(`/projects/${res.id}`)
-  }
-
-  const formatReminderBadge = (item: ReminderItem) => {
-    if (item.bucket === 'overdue') {
-      return locale === 'en'
-        ? `${Math.abs(item.daysDiff)} days overdue`
-        : `已逾期 ${Math.abs(item.daysDiff)} 天`
-    }
-    if (item.bucket === 'today') return t('reminderToday')
-    return locale === 'en' ? `${item.daysDiff} days left` : `尚餘 ${item.daysDiff} 天`
   }
 
   return (
@@ -177,170 +152,115 @@ export default function ProjectsClient({
       </div>
 
       {initialReminders.length > 0 ? (
-        <section className="rounded-2xl border border-[#FF9500]/20 bg-[#FFF7ED] px-4 py-4 shadow-sm sm:rounded-3xl sm:px-5">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-base font-semibold text-[#9A3412]">{t('projectReminders')}</h2>
-              <p className="mt-1 text-sm text-[#C2410C]">{t('projectRemindersHint')}</p>
-            </div>
-            <span className="rounded-full bg-[#FF9500]/15 px-2.5 py-1 text-xs font-bold text-[#C2410C]">
-              {initialReminders.length}
-            </span>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {(
-              [
-                ['ALL', t('all'), initialReminders.length],
-                ['overdue', t('reminderOverdue'), reminderGroups.overdue.length],
-                ['today', t('reminderToday'), reminderGroups.today.length],
-                ['upcoming', t('reminderUpcoming'), reminderGroups.upcoming.length],
-              ] as const
-            ).map(([key, label, count]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setReminderBucketFilter(key)
-                  setRemindersExpanded(false)
-                }}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                  reminderBucketFilter === key
-                    ? 'bg-[#9A3412] text-white'
-                    : 'bg-white/80 text-[#9A3412]'
-                }`}
-              >
-                {label} {count}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {visibleReminders.map((item) => {
-              const kind = kindLabel(item.kind, t)
-              return (
-                <a
-                  key={item.id}
-                  href={item.href}
-                  className="flex flex-col gap-1 rounded-xl bg-white/90 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-white sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {kind ? (
-                        <span className="rounded-md bg-[#FFF7ED] px-1.5 py-0.5 text-[10px] font-semibold text-[#9A3412]">
-                          {kind}
-                        </span>
-                      ) : null}
-                      <span className="font-medium text-gray-900">{item.title}</span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-gray-500">
-                      {dayLabel(item.targetDate)}
-                    </div>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-[#FFF7ED] px-2 py-0.5 text-xs font-medium text-[#C2410C]">
-                    {formatReminderBadge(item)}
-                  </span>
-                </a>
-              )
-            })}
-          </div>
-
-          {filteredReminders.length > REMINDER_PREVIEW ? (
-            <button
-              type="button"
-              onClick={() => setRemindersExpanded((v) => !v)}
-              className="mt-3 w-full rounded-xl bg-white/80 py-2 text-xs font-semibold text-[#9A3412]"
-            >
-              {remindersExpanded
-                ? t('reminderCollapse')
-                : t('reminderShowMore').replace(
-                    '{{count}}',
-                    String(filteredReminders.length - REMINDER_PREVIEW)
-                  )}
-            </button>
-          ) : null}
-        </section>
+        <div className="space-y-2">
+          <p className="px-1 text-xs text-[#C2410C]">{t('projectRemindersHint')}</p>
+          <ProjectRemindersGrouped
+            locale={locale}
+            items={initialReminders}
+            t={t}
+            defaultOpen
+            pageHref="/projects"
+          />
+        </div>
       ) : null}
 
       {!isProjectTemp && isAdmin ? (
-        <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-800">{t('createProject')}</h2>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={t('projectTitlePlaceholder')}
-            className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
-          />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as (typeof STATUS_KEYS)[number])}
-              className="rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-            >
-              {STATUS_KEYS.map((s) => (
-                <option key={s} value={s}>
-                  {statusLabel(s)}
-                </option>
-              ))}
-            </select>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                {t('projectStartDate')}
-              </span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              />
-            </label>
-          </div>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={t('projectNotePlaceholder')}
-            rows={2}
-            className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
-          />
-          <div>
-            <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
-            <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
-              {t('projectMemberRoleHint')}
-            </p>
-            <ProjectMemberPicker
-              locale={locale}
-              selected={selectedMembers}
-              onChange={setSelectedMembers}
-              allowManagerRole={false}
-              disabled={submitting}
-            />
-            <label className="mt-3 block">
-              <span className="mb-1 block text-xs font-medium text-gray-500">
-                {t('projectContact')}
-              </span>
-              <select
-                value={contactUserId}
-                onChange={(e) => setContactUserId(e.target.value)}
-                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              >
-                <option value="">{t('projectContactNone')}</option>
-                {selectedMembers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.roleName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+        <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
           <button
             type="button"
-            disabled={submitting || !title.trim()}
-            onClick={handleCreate}
-            className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
+            onClick={() => setShowCreate((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
           >
-            {submitting ? t('saving') : t('createProject')}
+            <span className="text-sm font-semibold text-gray-800">{t('projectCreateToggle')}</span>
+            <span
+              aria-hidden
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#007AFF] text-sm font-bold text-white transition-transform ${
+                showCreate ? 'rotate-45' : ''
+              }`}
+            >
+              +
+            </span>
           </button>
-          <AiProjectFrameworkPanel locale={locale} memberIds={memberIds} />
+          {showCreate ? (
+            <div className="space-y-3 border-t border-gray-100 pt-3">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t('projectTitlePlaceholder')}
+                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as (typeof STATUS_KEYS)[number])}
+                  className="rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                >
+                  {STATUS_KEYS.map((s) => (
+                    <option key={s} value={s}>
+                      {statusLabel(s)}
+                    </option>
+                  ))}
+                </select>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                    {t('projectStartDate')}
+                  </span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                  />
+                </label>
+              </div>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder={t('projectNotePlaceholder')}
+                rows={2}
+                className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none focus:border-[#007AFF] focus:bg-white"
+              />
+              <div>
+                <div className="mb-2 text-xs font-medium text-gray-500">{t('projectMembers')}</div>
+                <p className="mb-2 text-[11px] leading-relaxed text-gray-400">
+                  {t('projectMemberRoleHint')}
+                </p>
+                <ProjectMemberPicker
+                  locale={locale}
+                  selected={selectedMembers}
+                  onChange={setSelectedMembers}
+                  allowManagerRole={false}
+                  disabled={submitting}
+                />
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-xs font-medium text-gray-500">
+                    {t('projectContact')}
+                  </span>
+                  <select
+                    value={contactUserId}
+                    onChange={(e) => setContactUserId(e.target.value)}
+                    className="w-full rounded-xl border border-transparent bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                  >
+                    <option value="">{t('projectContactNone')}</option>
+                    {selectedMembers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.roleName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button
+                type="button"
+                disabled={submitting || !title.trim()}
+                onClick={handleCreate}
+                className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {submitting ? t('saving') : t('createProject')}
+              </button>
+              <AiProjectFrameworkPanel locale={locale} memberIds={memberIds} />
+            </div>
+          ) : null}
         </div>
       ) : !isProjectTemp ? (
         <div className="rounded-2xl bg-white px-4 py-3 text-sm text-gray-500 shadow-sm">
@@ -349,95 +269,110 @@ export default function ProjectsClient({
       ) : null}
 
       {!isProjectTemp ? (
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {(['ALL', ...STATUS_KEYS] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => setFilter(s)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${
-              filter === s ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 shadow-sm'
-            }`}
-          >
-            {s === 'ALL' ? t('all') : statusLabel(s)}
-          </button>
-        ))}
-      </div>
+        <div className="space-y-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('projectSearchPlaceholder')}
+            className="w-full rounded-2xl border border-transparent bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-[#007AFF]"
+          />
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(['ALL', ...STATUS_KEYS] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setFilter(s)}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  filter === s ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 shadow-sm'
+                }`}
+              >
+                {s === 'ALL' ? t('all') : statusLabel(s)}
+              </button>
+            ))}
+          </div>
+        </div>
       ) : null}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {filtered.length === 0 ? (
-          <div className="rounded-3xl bg-white p-8 text-center text-sm text-gray-400 shadow-sm">
-            {t('projectEmpty')}
+          <div className="rounded-3xl bg-white p-8 text-center shadow-sm">
+            <div className="text-sm text-gray-400">{t('projectEmpty')}</div>
+            {!isProjectTemp ? (
+              <p className="mt-2 text-xs text-gray-400">{t('projectEmptyHint')}</p>
+            ) : null}
           </div>
         ) : (
           filtered.map((project) => {
             const completion = project.completion
+            const reminderCounts = countReminderBuckets(
+              remindersByProject.get(project.id) || []
+            )
             return (
-            <a
-              key={project.id}
-              href={`/projects/${project.id}`}
-              className="block rounded-3xl border border-gray-100 bg-white p-4 shadow-sm transition-colors hover:border-[#007AFF]/30"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="truncate text-base font-semibold text-gray-900">
-                      {project.title}
+              <a
+                key={project.id}
+                href={`/projects/${project.id}`}
+                className="block rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm transition-colors hover:border-[#007AFF]/30"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="truncate text-[15px] font-semibold text-gray-900">
+                        {project.title}
+                      </div>
+                      {project.accessMode === 'temp' ? (
+                        <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                          {t('projectTempAccessBadge')}
+                        </span>
+                      ) : null}
                     </div>
-                    {project.accessMode === 'temp' ? (
-                      <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                        {t('projectTempAccessBadge')}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500">
+                      <span>{statusLabel(project.status)}</span>
+                      {!isProjectTemp && completion ? (
+                        <span>
+                          · {t('projectCompletion')} {completion.percent}%
+                        </span>
+                      ) : null}
+                      <span>
+                        · {t('projectTasks')} {project._count?.tasks ?? 0}
                       </span>
+                      {!isProjectTemp && project.startDate ? (
+                        <span className="text-gray-400">· {dayLabel(project.startDate)}</span>
+                      ) : null}
+                    </div>
+                    {reminderCounts.total > 0 ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {reminderCounts.overdue > 0 ? (
+                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                            {t('reminderOverdue')} {reminderCounts.overdue}
+                          </span>
+                        ) : null}
+                        {reminderCounts.today > 0 ? (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            {t('reminderToday')} {reminderCounts.today}
+                          </span>
+                        ) : null}
+                        {reminderCounts.upcoming > 0 ? (
+                          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                            {t('reminderUpcoming')} {reminderCounts.upcoming}
+                          </span>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
-                  <div className="mt-1 text-xs text-gray-500">
-                    {isProjectTemp
-                      ? `${t('projectTasks')}: ${project._count?.tasks ?? 0}`
-                      : `${t('projectOwner')}: ${project.owner?.roleName || '—'} · ${t('projectStartDate')}: ${dayLabel(project.startDate)}`}
-                  </div>
+                  <span className="shrink-0 text-[#007AFF]">›</span>
                 </div>
-                <span className="shrink-0 rounded-full bg-[#F2F2F7] px-2.5 py-1 text-[11px] font-semibold text-gray-600">
-                  {statusLabel(project.status)}
-                </span>
-              </div>
-              {!isProjectTemp ? (
-              <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
-                <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                  <div className="text-gray-400">{t('projectCompletion')}</div>
-                  <div className="font-semibold text-gray-800">
-                    {completion
-                      ? `${completion.percent}% (${completion.done}/${completion.total})`
-                      : '—'}
+                {!isProjectTemp &&
+                project.accessMode !== 'temp' &&
+                project.ledgerSummary &&
+                (project.canViewFullLedger || project.ledgerSummary.scoped) ? (
+                  <div className="mt-2 text-[11px] text-gray-400">
+                    {project.ledgerSummary.scoped
+                      ? t('projectLedgerMyScope')
+                      : t('projectLedgerBalance')}
+                    : {formatCurrency(locale, project.ledgerSummary.balanceHkd || 0)}
                   </div>
-                </div>
-                <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                  <div className="text-gray-400">{t('projectTasks')}</div>
-                  <div className="font-semibold text-gray-800">{project._count?.tasks ?? 0}</div>
-                </div>
-                <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                  <div className="text-gray-400">
-                    {project.accessMode === 'temp'
-                      ? t('projectTempAccessBadge')
-                      : project.ledgerSummary?.scoped
-                        ? t('projectLedgerMyScope')
-                        : t('projectLedgerBalance')}
-                  </div>
-                  <div className="font-semibold text-gray-800">
-                    {project.accessMode === 'temp'
-                      ? '—'
-                      : formatCurrency(locale, project.ledgerSummary?.balanceHkd || 0)}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                  <div className="text-gray-400">{t('projectMembers')}</div>
-                  <div className="font-semibold text-gray-800">
-                    {project.accessMode === 'temp' ? '—' : project.members?.length ?? 0}
-                  </div>
-                </div>
-              </div>
-              ) : null}
-            </a>
+                ) : null}
+              </a>
             )
           })
         )}

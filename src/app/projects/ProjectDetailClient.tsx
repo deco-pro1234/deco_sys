@@ -2,8 +2,10 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
+import type { ReminderItem } from '../actions/reminder'
+import ProjectRemindersGrouped from '@/components/ProjectRemindersGrouped'
 import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import {
   addProjectMemo,
@@ -192,6 +194,7 @@ type Props = {
   isAdmin: boolean
   project: ProjectDetail
   tempAccountCandidates?: Candidate[]
+  reminders?: ReminderItem[]
 }
 
 type TempGrantDraft = {
@@ -341,15 +344,37 @@ function taskVisibleContacts(
   return Array.from(map.values())
 }
 
+function daysDiffFromValue(dateValue?: string | Date | null) {
+  if (!dateValue) return null
+  const today = new Date()
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const target = new Date(dateValue)
+  if (Number.isNaN(target.getTime())) return null
+  const targetDay = new Date(target.getFullYear(), target.getMonth(), target.getDate())
+  return Math.ceil((targetDay.getTime() - startOfToday.getTime()) / 86400000)
+}
+
+function taskNeedsAction(task: { status: string; startAt?: string | Date | null; dueDate?: string | Date | null; reminderDays?: number }) {
+  if (task.status === 'DONE') return false
+  const reminderDays = Number(task.reminderDays ?? 7) || 7
+  const diffs = [daysDiffFromValue(task.dueDate), daysDiffFromValue(task.startAt)].filter(
+    (n): n is number => n !== null
+  )
+  if (diffs.length === 0) return false
+  return Math.min(...diffs) <= reminderDays
+}
+
 export default function ProjectDetailClient({
   locale,
   currentUserId,
   isAdmin,
   project,
   tempAccountCandidates = [],
+  reminders = [],
 }: Props) {
   const t = createTranslator(locale)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const isTemp = project.accessMode === 'temp'
   const canManageTempAccess = Boolean(project.canManageTempAccess)
   const canManageProject = Boolean(project.canManageProject || isAdmin)
@@ -359,6 +384,9 @@ export default function ProjectDetailClient({
   const [tab, setTab] = useState<'tasks' | 'ledger' | 'memo' | 'settings' | 'temp' | 'contacts'>(
     'tasks'
   )
+  const [taskViewMode, setTaskViewMode] = useState<'focus' | 'all' | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const deepLinkHandled = useRef<string | null>(null)
 
   const [title, setTitle] = useState(project.title)
   const [status, setStatus] = useState(project.status)
@@ -400,6 +428,36 @@ export default function ProjectDetailClient({
   const [childParentId, setChildParentId] = useState('')
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
   const [childParentTouched, setChildParentTouched] = useState(false)
+
+  useEffect(() => {
+    const focusTaskId = searchParams.get('task')
+    if (!focusTaskId || deepLinkHandled.current === focusTaskId) return
+    const task = (project.tasks || []).find((row) => row.id === focusTaskId)
+    if (!task) return
+    deepLinkHandled.current = focusTaskId
+    setTab('tasks')
+    setTaskViewMode('all')
+    setExpandedTaskId(focusTaskId)
+    setTaskContentDrafts((prev) => ({ ...prev, [task.id]: task.content || '' }))
+    setTaskStartDrafts((prev) => ({ ...prev, [task.id]: datetimeInput(task.startAt) }))
+    setTaskDueDrafts((prev) => ({ ...prev, [task.id]: datetimeInput(task.dueDate) }))
+    if (task.sectionId) {
+      setCollapsedSections((prev) => {
+        const next = { ...prev, [task.sectionId as string]: false }
+        const parent = (project.sections || []).find((s) => s.id === task.sectionId)
+        if (parent?.parentId) next[parent.parentId] = false
+        return next
+      })
+    } else {
+      setCollapsedSections((prev) => ({ ...prev, __uncategorized: false }))
+    }
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById(`project-task-${focusTaskId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [searchParams, project.tasks, project.sections])
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
@@ -549,6 +607,28 @@ export default function ProjectDetailClient({
   }, [rootSections, tasksBySectionId, t])
 
   const taskDisplayRows = isTemp ? displayRows.guest : displayRows.manage
+
+  const focusTasks = useMemo(() => {
+    const list = (project.tasks || []).filter((task) => taskNeedsAction(task))
+    return list.sort((a, b) => {
+      const aDiff = Math.min(
+        ...[daysDiffFromValue(a.dueDate), daysDiffFromValue(a.startAt)].filter(
+          (n): n is number => n !== null
+        ),
+        9999
+      )
+      const bDiff = Math.min(
+        ...[daysDiffFromValue(b.dueDate), daysDiffFromValue(b.startAt)].filter(
+          (n): n is number => n !== null
+        ),
+        9999
+      )
+      return aDiff - bDiff
+    })
+  }, [project.tasks])
+
+  const effectiveTaskView: 'focus' | 'all' =
+    taskViewMode ?? (focusTasks.length > 0 ? 'focus' : 'all')
 
   const [tempUserId, setTempUserId] = useState('')
   const [tempExpiresAt, setTempExpiresAt] = useState('')
@@ -1030,6 +1110,11 @@ export default function ProjectDetailClient({
     ] as const
   )
 
+  const primaryTabKeys = new Set<'tasks' | 'ledger'>(['tasks', 'ledger'])
+  const primaryTabs = tabs.filter(([key]) => primaryTabKeys.has(key as 'tasks' | 'ledger'))
+  const moreTabs = tabs.filter(([key]) => !primaryTabKeys.has(key as 'tasks' | 'ledger'))
+  const moreActive = moreTabs.some(([key]) => key === activeTab)
+
   return (
     <div className="mx-auto max-w-4xl space-y-4 py-4">
       <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
@@ -1121,24 +1206,105 @@ export default function ProjectDetailClient({
       </div>
 
       {tabs.length > 1 ? (
-      <div className="flex gap-2 overflow-x-auto">
-        {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold ${
-              activeTab === key ? 'bg-[#007AFF] text-white' : 'bg-white text-gray-600 shadow-sm'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex gap-2 overflow-x-auto">
+          {(moreTabs.length > 0 ? primaryTabs : tabs).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setTab(key)
+                setMoreOpen(false)
+              }}
+              className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold ${
+                activeTab === key ? 'bg-[#007AFF] text-white' : 'bg-white text-gray-600 shadow-sm'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {moreTabs.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setMoreOpen((v) => !v)}
+              className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold ${
+                moreActive || moreOpen ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 shadow-sm'
+              }`}
+            >
+              {t('projectMoreTabs')}
+              {moreActive ? ' ·' : ''}
+            </button>
+          ) : null}
+        </div>
+        {moreOpen && moreTabs.length > 0 ? (
+          <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 shadow-sm">
+            {moreTabs.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setTab(key)
+                  setMoreOpen(false)
+                }}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  activeTab === key ? 'bg-[#007AFF] text-white' : 'bg-[#F2F2F7] text-gray-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       ) : null}
 
       {activeTab === 'tasks' ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+          {reminders.length > 0 ? (
+            <div className="space-y-1.5">
+              <div className="text-xs font-semibold text-[#9A3412]">
+                {t('projectRemindersInProject')}
+              </div>
+              <ProjectRemindersGrouped
+                locale={locale}
+                items={reminders}
+                t={t}
+                compact
+                hideHeader
+                pageHref={`/projects/${project.id}`}
+              />
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTaskViewMode('focus')}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                effectiveTaskView === 'focus'
+                  ? 'bg-[#9A3412] text-white'
+                  : 'bg-[#F2F2F7] text-gray-600'
+              }`}
+            >
+              {t('projectTaskViewFocus')}
+              {focusTasks.length > 0 ? ` ${focusTasks.length}` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTaskViewMode('all')}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                effectiveTaskView === 'all' ? 'bg-gray-900 text-white' : 'bg-[#F2F2F7] text-gray-600'
+              }`}
+            >
+              {t('projectTaskViewAll')}
+            </button>
+          </div>
+          {effectiveTaskView === 'focus' ? (
+            <p className="text-[11px] leading-relaxed text-gray-400">
+              {t('projectTaskViewFocusHint')}
+            </p>
+          ) : null}
+
           {isFullMember ? (
             <div className="space-y-2 rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] p-3">
               <div className="text-xs font-semibold text-gray-600">{t('projectPdfExport')}</div>
@@ -1395,10 +1561,20 @@ export default function ProjectDetailClient({
           ) : null}
 
           <div className="divide-y divide-gray-100">
-            {taskDisplayRows.length === 0 ? (
+            {effectiveTaskView === 'focus' && focusTasks.length === 0 ? (
+              <div className="py-6 text-center text-sm text-gray-400">
+                {t('projectTaskViewEmptyFocus')}
+              </div>
+            ) : (effectiveTaskView === 'all' ? taskDisplayRows : focusTasks.map((task) => ({
+                kind: 'task' as const,
+                task,
+              }))).length === 0 ? (
               <div className="py-6 text-center text-sm text-gray-400">{t('projectTaskEmpty')}</div>
             ) : (
-              taskDisplayRows.map((row) => {
+              (effectiveTaskView === 'focus'
+                ? focusTasks.map((task) => ({ kind: 'task' as const, task }))
+                : taskDisplayRows
+              ).map((row) => {
                 if (row.kind === 'section') {
                   if (row.depth > 0) {
                     const parent = rootSections.find((r) =>
@@ -1582,22 +1758,24 @@ export default function ProjectDetailClient({
                 }
 
                 const task = row.task
-                const parentSectionKey = task.sectionId || '__uncategorized'
-                if (collapsedSections[parentSectionKey]) return null
-                // Also collapse if parent root is collapsed for child sections
-                const sectionMeta = task.sectionId
-                  ? rootSections
-                      .flatMap((r) => [
-                        { id: r.id, parentId: null as string | null },
-                        ...(r.children || []).map((c) => ({
-                          id: c.id,
-                          parentId: r.id as string | null,
-                        })),
-                      ])
-                      .find((s) => s.id === task.sectionId)
-                  : null
-                if (sectionMeta?.parentId && collapsedSections[sectionMeta.parentId]) {
-                  return null
+                if (effectiveTaskView === 'all') {
+                  const parentSectionKey = task.sectionId || '__uncategorized'
+                  if (collapsedSections[parentSectionKey]) return null
+                  // Also collapse if parent root is collapsed for child sections
+                  const sectionMeta = task.sectionId
+                    ? rootSections
+                        .flatMap((r) => [
+                          { id: r.id, parentId: null as string | null },
+                          ...(r.children || []).map((c) => ({
+                            id: c.id,
+                            parentId: r.id as string | null,
+                          })),
+                        ])
+                        .find((s) => s.id === task.sectionId)
+                    : null
+                  if (sectionMeta?.parentId && collapsedSections[sectionMeta.parentId]) {
+                    return null
+                  }
                 }
 
                 const expanded = expandedTaskId === task.id
@@ -1606,7 +1784,7 @@ export default function ProjectDetailClient({
                 const viewerIsAssignee = isTaskAssignee(task, currentUserId)
                 const canMemo = canAddMemoForTask(task.id)
                 return (
-                  <div key={task.id} className="py-3">
+                  <div key={task.id} id={`project-task-${task.id}`} className="py-3">
                     <div className="flex items-start justify-between gap-3">
                       <button
                         type="button"
