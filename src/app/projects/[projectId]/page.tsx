@@ -1,10 +1,12 @@
 import { notFound, redirect } from 'next/navigation'
+import { Suspense } from 'react'
 import { getSession } from '../../actions/auth'
 import { getPluginFlags } from '../../actions/settings'
 import { getCurrentLocale } from '@/lib/locale'
 import { isProjectTempAccount } from '@/lib/access'
 import {
   getProjectDetail,
+  getProjectReminderItems,
   getProjectTempAccountCandidates,
 } from '../../actions/project'
 import ProjectDetailClient from '../ProjectDetailClient'
@@ -56,9 +58,17 @@ export default async function ProjectDetailPage({
   }
   if (!project) notFound()
 
-  const tempCandidates = project.canManageTempAccess
-    ? await getProjectTempAccountCandidates(projectId)
-    : []
+  const [tempCandidates, allReminders] = await Promise.all([
+    project.canManageTempAccess
+      ? getProjectTempAccountCandidates(projectId)
+      : Promise.resolve([]),
+    getProjectReminderItems(),
+  ])
+
+  const projectReminders = allReminders.filter((item) => {
+    if (item.projectId) return item.projectId === projectId
+    return item.href.startsWith(`/projects/${projectId}`)
+  })
 
   // Ensure arrays exist so the client tree never crashes on .map/.filter.
   const safeProject = {
@@ -73,13 +83,16 @@ export default async function ProjectDetailPage({
 
   return (
     <div className="min-h-screen bg-[#F2F2F7]">
-      <ProjectDetailClient
-        locale={await getCurrentLocale()}
-        currentUserId={session.userId}
-        isAdmin={session.isAdmin}
-        project={toClientJSON(safeProject)}
-        tempAccountCandidates={toClientJSON(tempCandidates)}
-      />
+      <Suspense fallback={<div className="p-6 text-sm text-gray-400">…</div>}>
+        <ProjectDetailClient
+          locale={await getCurrentLocale()}
+          currentUserId={session.userId}
+          isAdmin={session.isAdmin}
+          project={toClientJSON(safeProject)}
+          tempAccountCandidates={toClientJSON(tempCandidates)}
+          reminders={toClientJSON(projectReminders)}
+        />
+      </Suspense>
     </div>
   )
 }

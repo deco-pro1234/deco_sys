@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { createTranslator, type Locale } from '@/lib/i18n'
 import type { ReminderBucket, ReminderItem, ReminderKind } from '@/app/actions/reminder'
+import ProjectRemindersGrouped from '@/components/ProjectRemindersGrouped'
 
 type Props = {
   locale: Locale
@@ -101,7 +102,6 @@ function Section({
   locale: Locale
   t: (key: any) => string
 }) {
-  // Collapsed by default so reminders do not dominate the page when many exist.
   const [open, setOpen] = useState(false)
   const [listExpanded, setListExpanded] = useState(false)
   const groups = useMemo(() => groupByBucket(items), [items])
@@ -236,7 +236,9 @@ export default function ReminderOverview({
     <div className="mx-auto mt-4 grid max-w-4xl grid-cols-1 gap-3 px-4 sm:px-0 md:grid-cols-2">
       <Section title={t('contractExpiryReminder')} href="/contracts" items={contracts} locale={locale} t={t} />
       <Section title={t('activityReminder')} href="/activities" items={activities} locale={locale} t={t} />
-      <Section title={t('projectReminders')} href="/projects" items={projects} locale={locale} t={t} />
+      {projects.length > 0 ? (
+        <ProjectRemindersGrouped locale={locale} items={projects} t={t} pageHref="/projects" />
+      ) : null}
       <Section title={t('recurring')} href="/recurring" items={recurring} locale={locale} t={t} />
     </div>
   )

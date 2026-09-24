@@ -26,6 +26,10 @@ export type ReminderItem = {
   href: string
   /** Optional subtype for badges / grouping labels */
   kind?: ReminderKind
+  /** Project reminders: group key + deep-link targets */
+  projectId?: string
+  projectTitle?: string
+  taskId?: string | null
 }
 
 function getDaysDiff(dateValue: Date) {
