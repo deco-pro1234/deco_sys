@@ -20,6 +20,7 @@ import {
   removeWhatsAppBinding,
   upsertWhatsAppBinding,
 } from "../actions/whatsapp";
+import WhatsAppSessionPanel from "@/components/WhatsAppSessionPanel";
 
 type WhatsAppBindingRow = {
   id: string
@@ -1454,7 +1455,10 @@ function WhatsAppTab({
   };
 
   return (
-    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 space-y-5">
+    <div className="space-y-5">
+      <WhatsAppSessionPanel locale={locale} />
+
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-gray-800">{t('whatsapp')}</h2>
         <p className="mt-2 text-sm text-gray-500">{t('whatsappHint')}</p>
@@ -1523,6 +1527,7 @@ function WhatsAppTab({
             ))}
           </ul>
         )}
+      </div>
       </div>
     </div>
   );

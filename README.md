@@ -10,7 +10,7 @@ deco Production Limited 财务收支记录系统（由 SK11 Finance / FINNE18 �
 
 ### Railway 部署（推荐）
 
-仓库已含根目录 `Dockerfile` + `railway.toml`，以及 `cron-worker/` 提醒服务。
+仓库已含根目录 `Dockerfile` + `railway.toml`，以及 `cron-worker/` 提醒服务、`whatsapp-worker/`（whatsapp-web.js 扫码连线）。
 
 1. 打开 [Railway](https://railway.app) → **New Project** → **Deploy from GitHub repo** → 选择 `deco-pro1234/deco_sys`（分支 `main`）。
 2. **Add PostgreSQL** 插件；Postgres 需显示 Online。

@@ -1,0 +1,19 @@
+{
+  "name": "deco-whatsapp-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Always-on whatsapp-web.js session worker (QR login, SSE status, send later)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.34.1"
+  }
+}
