@@ -101,7 +101,9 @@ function Section({
   locale: Locale
   t: (key: any) => string
 }) {
-  const [expanded, setExpanded] = useState(false)
+  // Collapsed by default so reminders do not dominate the page when many exist.
+  const [open, setOpen] = useState(false)
+  const [listExpanded, setListExpanded] = useState(false)
   const groups = useMemo(() => groupByBucket(items), [items])
   const counts = useMemo(() => bucketCounts(items), [items])
 
@@ -114,19 +116,43 @@ function Section({
   ]
 
   const hiddenCount = buckets.reduce((sum, b) => {
-    if (expanded) return sum
+    if (listExpanded) return sum
     return sum + Math.max(0, b.list.length - PREVIEW_PER_BUCKET)
   }, 0)
 
   return (
     <div className="rounded-2xl border border-[#FF9500]/20 bg-white/80 p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <Link href={href} className="text-sm font-semibold text-[#9A3412] hover:underline">
-          {title}
-        </Link>
-        <span className="rounded-full bg-[#FF9500]/10 px-2.5 py-1 text-xs font-bold text-[#C2410C]">
-          {items.length}
-        </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span
+            aria-hidden
+            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#FF9500]/10 text-[10px] font-bold text-[#9A3412] transition-transform ${
+              open ? 'rotate-90' : ''
+            }`}
+          >
+            ▶
+          </span>
+          <span className="truncate text-sm font-semibold text-[#9A3412]">{title}</span>
+          <span className="sr-only">
+            {open ? t('reminderCollapseSection') : t('reminderExpandSection')}
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full bg-[#FF9500]/10 px-2.5 py-1 text-xs font-bold text-[#C2410C]">
+            {items.length}
+          </span>
+          <Link
+            href={href}
+            className="rounded-lg px-1.5 py-1 text-[11px] font-semibold text-[#C2410C] hover:bg-[#FFF7ED]"
+          >
+            {t('reminderOpenPage')}
+          </Link>
+        </div>
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
@@ -147,36 +173,42 @@ function Section({
         ) : null}
       </div>
 
-      <div className="mt-3 space-y-3">
-        {buckets.map((bucket) => {
-          if (bucket.list.length === 0) return null
-          const visible = expanded ? bucket.list : bucket.list.slice(0, PREVIEW_PER_BUCKET)
-          return (
-            <div key={bucket.key}>
-              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                {bucket.label}
-                <span className="ml-1 font-normal text-gray-400">({bucket.list.length})</span>
-              </div>
-              <div className="space-y-1.5">
-                {visible.map((item) => (
-                  <ReminderRow key={item.id} item={item} locale={locale} t={t} />
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+      {open ? (
+        <>
+          <div className="mt-3 space-y-3">
+            {buckets.map((bucket) => {
+              if (bucket.list.length === 0) return null
+              const visible = listExpanded
+                ? bucket.list
+                : bucket.list.slice(0, PREVIEW_PER_BUCKET)
+              return (
+                <div key={bucket.key}>
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                    {bucket.label}
+                    <span className="ml-1 font-normal text-gray-400">({bucket.list.length})</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {visible.map((item) => (
+                      <ReminderRow key={item.id} item={item} locale={locale} t={t} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
 
-      {hiddenCount > 0 || expanded ? (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-3 w-full rounded-xl bg-[#FFF7ED] py-2 text-xs font-semibold text-[#9A3412] transition-colors hover:bg-[#FFEDD5]"
-        >
-          {expanded
-            ? t('reminderCollapse')
-            : t('reminderShowMore').replace('{{count}}', String(hiddenCount))}
-        </button>
+          {hiddenCount > 0 || listExpanded ? (
+            <button
+              type="button"
+              onClick={() => setListExpanded((v) => !v)}
+              className="mt-3 w-full rounded-xl bg-[#FFF7ED] py-2 text-xs font-semibold text-[#9A3412] transition-colors hover:bg-[#FFEDD5]"
+            >
+              {listExpanded
+                ? t('reminderCollapse')
+                : t('reminderShowMore').replace('{{count}}', String(hiddenCount))}
+            </button>
+          ) : null}
+        </>
       ) : null}
     </div>
   )
