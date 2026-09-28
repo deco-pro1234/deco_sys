@@ -10,6 +10,7 @@ import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type 
 import {
   addProjectMemo,
   addProjectTaskMemo,
+  addProjectLedgerAttachment,
   addProjectSectionAttachment,
   addProjectTaskAttachment,
   createProjectLedgerEntry,
@@ -17,6 +18,7 @@ import {
   createProjectTask,
   createProjectTempAccount,
   deleteProject,
+  deleteProjectAttachment,
   deleteProjectLedgerEntry,
   deleteProjectSection,
   deleteProjectTask,
@@ -27,6 +29,7 @@ import {
   setProjectMembers,
   setUserProjectSectionAccess,
   updateProject,
+  updateProjectAttachmentNote,
   updateProjectSection,
   updateProjectTask,
 } from '../actions/project'
@@ -442,6 +445,7 @@ export default function ProjectDetailClient({
   const [taskStartDrafts, setTaskStartDrafts] = useState<Record<string, string>>({})
   const [taskDueDrafts, setTaskDueDrafts] = useState<Record<string, string>>({})
   const [sectionDescDrafts, setSectionDescDrafts] = useState<Record<string, string>>({})
+  const [attachmentNoteDrafts, setAttachmentNoteDrafts] = useState<Record<string, string>>({})
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>(null)
   const [assigneeOverrides, setAssigneeOverrides] = useState<Record<string, string[]>>({})
   const assigneeOverridesRef = useRef(assigneeOverrides)
@@ -930,6 +934,84 @@ export default function ProjectDetailClient({
     }
     router.refresh()
     return true
+  }
+
+  const renderManagedAttachments = (
+    attachments: FileAttachment[] | undefined,
+    options?: { thumbnails?: boolean }
+  ) => {
+    const list = attachments || []
+    if (list.length === 0) {
+      return <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
+    }
+    return (
+      <div className="space-y-2">
+        {list.map((att, idx) => {
+          const noteValue = attachmentNoteDrafts[att.id] ?? att.note ?? ''
+          return (
+            <div
+              key={att.id}
+              className="flex flex-wrap items-center gap-2 rounded-xl bg-white px-2 py-1.5 shadow-sm"
+            >
+              {options?.thumbnails ? (
+                <button
+                  type="button"
+                  onClick={() => openAttachment(att.fileUrl)}
+                  className="shrink-0 rounded-lg border border-gray-200 p-0.5"
+                  title={att.note || t('attachment')}
+                >
+                  <img
+                    src={att.fileUrl}
+                    alt={att.note || `${t('attachment')} ${idx + 1}`}
+                    className="h-12 w-12 rounded object-cover"
+                  />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => openAttachment(att.fileUrl)}
+                  className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                >
+                  {att.note || `${t('attachment')} ${idx + 1}`}
+                </button>
+              )}
+              <input
+                value={noteValue}
+                onChange={(e) =>
+                  setAttachmentNoteDrafts((prev) => ({
+                    ...prev,
+                    [att.id]: e.target.value,
+                  }))
+                }
+                placeholder={t('attachmentNotePlaceholder')}
+                className="min-w-[8rem] flex-1 rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] outline-none"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  run(() => updateProjectAttachmentNote(att.id, noteValue))
+                }
+                className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700 disabled:opacity-50"
+              >
+                {t('saveAttachmentNote')}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (!confirm(t('confirmDeleteAttachment'))) return
+                  run(() => deleteProjectAttachment(att.id))
+                }}
+                className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600 disabled:opacity-50"
+              >
+                {t('delete')}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    )
   }
 
   const toggleCreateAssignee = (id: string) => {
@@ -1667,22 +1749,7 @@ export default function ProjectDetailClient({
                           <div className="text-xs font-medium text-gray-500">
                             {t('projectSectionAttachments')}
                           </div>
-                          {(sectionEntity.attachments || []).length === 0 ? (
-                            <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {(sectionEntity.attachments || []).map((att, idx) => (
-                                <button
-                                  key={att.id}
-                                  type="button"
-                                  onClick={() => openAttachment(att.fileUrl)}
-                                  className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
-                                >
-                                  {att.note || `${t('attachment')} ${idx + 1}`}
-                                </button>
-                              ))}
-                            </div>
-                          )}
+                          {renderManagedAttachments(sectionEntity.attachments)}
                           <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-[#007AFF] shadow-sm">
                             {t('addAttachment')}
                             <input
@@ -1923,27 +1990,29 @@ export default function ProjectDetailClient({
                           </div>
                         </div>
 
-                        <div className="space-y-2">
-                          <div className="text-xs font-medium text-gray-500">
-                            {t('projectTaskAttachments')}
-                          </div>
-                          {(task.attachments || []).length === 0 ? (
-                            <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {(task.attachments || []).map((att, idx) => (
-                                <button
-                                  key={att.id}
-                                  type="button"
-                                  onClick={() => openAttachment(att.fileUrl)}
-                                  className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
-                                >
-                                  {att.note || `${t('attachment')} ${idx + 1}`}
-                                </button>
-                              ))}
+                        {!editing ? (
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium text-gray-500">
+                              {t('projectTaskAttachments')}
                             </div>
-                          )}
-                        </div>
+                            {(task.attachments || []).length === 0 ? (
+                              <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {(task.attachments || []).map((att, idx) => (
+                                  <button
+                                    key={att.id}
+                                    type="button"
+                                    onClick={() => openAttachment(att.fileUrl)}
+                                    className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                                  >
+                                    {att.note || `${t('attachment')} ${idx + 1}`}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
 
                         <div className="space-y-2">
                           <div className="text-xs font-medium text-gray-500">
@@ -1966,18 +2035,24 @@ export default function ProjectDetailClient({
                                   {m.content}
                                 </div>
                                 {m.attachments && m.attachments.length > 0 ? (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {m.attachments.map((att, idx) => (
-                                      <button
-                                        key={att.id}
-                                        type="button"
-                                        onClick={() => openAttachment(att.fileUrl)}
-                                        className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
-                                      >
-                                        {att.note || `${t('attachment')} ${idx + 1}`}
-                                      </button>
-                                    ))}
-                                  </div>
+                                  editing ? (
+                                    <div className="mt-2">
+                                      {renderManagedAttachments(m.attachments)}
+                                    </div>
+                                  ) : (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {m.attachments.map((att, idx) => (
+                                        <button
+                                          key={att.id}
+                                          type="button"
+                                          onClick={() => openAttachment(att.fileUrl)}
+                                          className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                                        >
+                                          {att.note || `${t('attachment')} ${idx + 1}`}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )
                                 ) : null}
                               </div>
                             ))
@@ -2203,6 +2278,7 @@ export default function ProjectDetailClient({
                               <div className="text-xs font-medium text-gray-500">
                                 {t('projectTaskAttachments')}
                               </div>
+                              {renderManagedAttachments(task.attachments)}
                               <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-[#007AFF] shadow-sm">
                                 {t('addAttachment')}
                                 <input
@@ -2590,7 +2666,36 @@ export default function ProjectDetailClient({
                           ? ` · ${entry.createdBy.roleName}`
                           : ''}
                       </div>
-                      {(entry.attachments || []).length > 0 ? (
+                      {canDelete ? (
+                        <div className="mt-2 space-y-2">
+                          {renderManagedAttachments(entry.attachments, {
+                            thumbnails: true,
+                          })}
+                          <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-[#007AFF] shadow-sm">
+                            {t('addAttachment')}
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0]
+                                if (!file) return
+                                const files = await prepareUploadFiles(file)
+                                e.target.value = ''
+                                for (const item of files) {
+                                  await run(() =>
+                                    addProjectLedgerAttachment(entry.id, {
+                                      url: item.url,
+                                      size: item.size,
+                                      note: item.note,
+                                    })
+                                  )
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                      ) : (entry.attachments || []).length > 0 ? (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(entry.attachments || []).map((att, idx) => (
                             <button
