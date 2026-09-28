@@ -435,6 +435,7 @@ export default function ProjectDetailClient({
   }
 
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [taskMemoDraft, setTaskMemoDraft] = useState('')
   const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
   const [taskContentDrafts, setTaskContentDrafts] = useState<Record<string, string>>({})
@@ -1737,10 +1738,14 @@ export default function ProjectDetailClient({
                 }
 
                 const expanded = expandedTaskId === task.id
+                const editing = editingTaskId === task.id
                 const names = taskAssigneeNames(task)
                 const memberContacts = visibleContactsForTask(task)
                 const viewerIsAssignee = isTaskAssignee(task, currentUserId)
                 const canMemo = canAddMemoForTask(task.id)
+                const sectionLabel =
+                  sectionOptions.find((opt) => opt.id === (task.sectionId || ''))?.label ||
+                  t('projectTaskSectionNone')
                 return (
                   <div key={task.id} id={`project-task-${task.id}`} className="py-3">
                     <div className="flex items-start justify-between gap-3">
@@ -1749,21 +1754,27 @@ export default function ProjectDetailClient({
                         aria-expanded={expanded}
                         className="min-w-0 flex-1 rounded-xl px-1 py-0.5 text-left hover:bg-gray-50"
                         onClick={() => {
-                          setExpandedTaskId(expanded ? null : task.id)
-                          setTaskMemoDraft('')
-                          setTaskMemoFiles([])
-                          setTaskContentDrafts((prev) => ({
-                            ...prev,
-                            [task.id]: task.content || '',
-                          }))
-                          setTaskStartDrafts((prev) => ({
-                            ...prev,
-                            [task.id]: datetimeInput(task.startAt),
-                          }))
-                          setTaskDueDrafts((prev) => ({
-                            ...prev,
-                            [task.id]: datetimeInput(task.dueDate),
-                          }))
+                          if (expanded) {
+                            setExpandedTaskId(null)
+                            setEditingTaskId(null)
+                          } else {
+                            setExpandedTaskId(task.id)
+                            setEditingTaskId(null)
+                            setTaskMemoDraft('')
+                            setTaskMemoFiles([])
+                            setTaskContentDrafts((prev) => ({
+                              ...prev,
+                              [task.id]: task.content || '',
+                            }))
+                            setTaskStartDrafts((prev) => ({
+                              ...prev,
+                              [task.id]: datetimeInput(task.startAt),
+                            }))
+                            setTaskDueDrafts((prev) => ({
+                              ...prev,
+                              [task.id]: datetimeInput(task.dueDate),
+                            }))
+                          }
                         }}
                       >
                         <div className="flex items-center gap-2">
@@ -1873,114 +1884,239 @@ export default function ProjectDetailClient({
 
                     {expanded ? (
                       <div className="mt-3 space-y-3 rounded-2xl bg-[#F8FAFC] p-3">
+                        {!editing ? (
+                          <p className="text-[11px] text-gray-400">{t('projectTaskViewOnlyHint')}</p>
+                        ) : null}
+
                         <div>
-                          <div className="mb-2 text-xs font-medium text-gray-500">
+                          <div className="mb-1 text-xs font-medium text-gray-500">
                             {viewerIsAssignee
                               ? t('projectTaskMembers')
                               : t('projectTaskAssignees')}
                           </div>
-                          {renderTaskMemberContacts(task)}
+                          {names ? (
+                            <div className="text-sm text-gray-800">{names}</div>
+                          ) : (
+                            <div className="text-sm text-gray-400">—</div>
+                          )}
+                          <div className="mt-2">{renderTaskMemberContacts(task)}</div>
                         </div>
-                        {isFullMember ? (
-                          <div>
-                            <div className="mb-2 text-xs font-medium text-gray-500">
-                              {t('projectTaskAssigneesEdit')}
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {project.members.map((m) => {
-                                const currentIds =
-                                  assigneeOverrides[task.id] ?? getTaskAssigneeIds(task)
-                                const selected = currentIds.includes(m.userId)
-                                return (
-                                  <button
-                                    key={m.userId}
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => {
-                                      const base =
-                                        assigneeOverridesRef.current[task.id] ??
-                                        getTaskAssigneeIds(task)
-                                      const next = selected
-                                        ? base.filter((id) => id !== m.userId)
-                                        : [...base, m.userId]
-                                      setAssigneeOverrides((prev) => ({
-                                        ...prev,
-                                        [task.id]: next,
-                                      }))
-                                      run(() =>
-                                        updateProjectTask(task.id, {
-                                          title: task.title,
-                                          status: task.status as any,
-                                          startAt: datetimeInput(task.startAt) || null,
-                                          dueDate: datetimeInput(task.dueDate) || null,
-                                          reminderDays: task.reminderDays,
-                                          note: task.note || undefined,
-                                          assigneeIds: next,
-                                        })
-                                      ).then((ok) => {
-                                        if (!ok) {
-                                          setAssigneeOverrides((prev) => {
-                                            const copy = { ...prev }
-                                            delete copy[task.id]
-                                            return copy
-                                          })
-                                        }
-                                      })
-                                    }}
-                                    className={`rounded-full px-3 py-1 text-xs font-medium ${
-                                      selected
-                                        ? 'bg-[#007AFF] text-white'
-                                        : 'bg-white text-gray-600 shadow-sm'
-                                    }`}
-                                  >
-                                    {m.user?.roleName || m.userId}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {isFullMember ? (
-                          <div>
-                            <div className="mb-2 text-xs font-medium text-gray-500">
-                              {t('projectTaskSection')}
-                            </div>
-                            <select
-                              value={task.sectionId || ''}
-                              disabled={busy}
-                              onChange={(e) => {
-                                const nextSectionId = e.target.value || null
-                                run(() =>
-                                  updateProjectTask(task.id, {
-                                    title: task.title,
-                                    status: task.status as any,
-                                    startAt: datetimeInput(task.startAt) || null,
-                                    dueDate: datetimeInput(task.dueDate) || null,
-                                    reminderDays: task.reminderDays,
-                                    note: task.note || undefined,
-                                    sectionId: nextSectionId,
-                                    assigneeIds: getTaskAssigneeIds(task),
-                                  })
-                                )
-                              }}
-                              className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                            >
-                              {sectionOptions.map((opt) => (
-                                <option key={opt.id || 'none'} value={opt.id}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : null}
 
                         <div>
-                          <div className="mb-2 text-xs font-medium text-gray-500">
+                          <div className="mb-1 text-xs font-medium text-gray-500">
+                            {t('projectTaskSection')}
+                          </div>
+                          <div className="text-sm text-gray-800">{sectionLabel}</div>
+                        </div>
+
+                        <div>
+                          <div className="mb-1 text-xs font-medium text-gray-500">
                             {t('projectTaskContent')}
                           </div>
-                          {isFullMember ? (
-                            <>
+                          <div className="whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-sm text-gray-800 shadow-sm">
+                            {task.content || '—'}
+                            {taskScheduleLabel(task) ? (
+                              <div className="mt-2 text-xs text-gray-500">
+                                {taskScheduleLabel(task)}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-gray-500">
+                            {t('projectTaskAttachments')}
+                          </div>
+                          {(task.attachments || []).length === 0 ? (
+                            <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {(task.attachments || []).map((att, idx) => (
+                                <button
+                                  key={att.id}
+                                  type="button"
+                                  onClick={() => openAttachment(att.fileUrl)}
+                                  className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                                >
+                                  {att.note || `${t('attachment')} ${idx + 1}`}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-gray-500">
+                            {t('projectTaskMemos')}
+                          </div>
+                          {(task.memos || []).length === 0 ? (
+                            <div className="text-xs text-gray-400">
+                              {t('projectTaskMemoEmpty')}
+                            </div>
+                          ) : (
+                            (task.memos || []).map((m) => (
+                              <div
+                                key={m.id}
+                                className="rounded-xl bg-white px-3 py-2 text-sm shadow-sm"
+                              >
+                                <div className="text-xs text-gray-400">
+                                  {m.author?.roleName || '—'} · {dayInput(m.createdAt)}
+                                </div>
+                                <div className="mt-1 whitespace-pre-wrap text-gray-800">
+                                  {m.content}
+                                </div>
+                                {m.attachments && m.attachments.length > 0 ? (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {m.attachments.map((att, idx) => (
+                                      <button
+                                        key={att.id}
+                                        type="button"
+                                        onClick={() => openAttachment(att.fileUrl)}
+                                        className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
+                                      >
+                                        {att.note || `${t('attachment')} ${idx + 1}`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        {isFullMember && !editing ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTaskId(task.id)
+                              setTaskContentDrafts((prev) => ({
+                                ...prev,
+                                [task.id]: task.content || '',
+                              }))
+                              setTaskStartDrafts((prev) => ({
+                                ...prev,
+                                [task.id]: datetimeInput(task.startAt),
+                              }))
+                              setTaskDueDrafts((prev) => ({
+                                ...prev,
+                                [task.id]: datetimeInput(task.dueDate),
+                              }))
+                            }}
+                            className="w-full rounded-xl bg-[#007AFF] py-2.5 text-sm font-semibold text-white"
+                          >
+                            {t('projectTaskEdit')}
+                          </button>
+                        ) : null}
+
+                        {isFullMember && editing ? (
+                          <div className="space-y-3 border-t border-gray-200 pt-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-semibold text-gray-700">
+                                {t('projectTaskEdit')}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setEditingTaskId(null)}
+                                className="text-xs font-semibold text-gray-500"
+                              >
+                                {t('projectTaskCancelEdit')}
+                              </button>
+                            </div>
+
+                            <div>
+                              <div className="mb-2 text-xs font-medium text-gray-500">
+                                {t('projectTaskAssigneesEdit')}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {project.members.map((m) => {
+                                  const currentIds =
+                                    assigneeOverrides[task.id] ?? getTaskAssigneeIds(task)
+                                  const selected = currentIds.includes(m.userId)
+                                  return (
+                                    <button
+                                      key={m.userId}
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => {
+                                        const base =
+                                          assigneeOverridesRef.current[task.id] ??
+                                          getTaskAssigneeIds(task)
+                                        const next = selected
+                                          ? base.filter((id) => id !== m.userId)
+                                          : [...base, m.userId]
+                                        setAssigneeOverrides((prev) => ({
+                                          ...prev,
+                                          [task.id]: next,
+                                        }))
+                                        run(() =>
+                                          updateProjectTask(task.id, {
+                                            title: task.title,
+                                            status: task.status as any,
+                                            startAt: datetimeInput(task.startAt) || null,
+                                            dueDate: datetimeInput(task.dueDate) || null,
+                                            reminderDays: task.reminderDays,
+                                            note: task.note || undefined,
+                                            assigneeIds: next,
+                                          })
+                                        ).then((ok) => {
+                                          if (!ok) {
+                                            setAssigneeOverrides((prev) => {
+                                              const copy = { ...prev }
+                                              delete copy[task.id]
+                                              return copy
+                                            })
+                                          }
+                                        })
+                                      }}
+                                      className={`rounded-full px-3 py-1 text-xs font-medium ${
+                                        selected
+                                          ? 'bg-[#007AFF] text-white'
+                                          : 'bg-white text-gray-600 shadow-sm'
+                                      }`}
+                                    >
+                                      {m.user?.roleName || m.userId}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="mb-2 text-xs font-medium text-gray-500">
+                                {t('projectTaskSection')}
+                              </div>
+                              <select
+                                value={task.sectionId || ''}
+                                disabled={busy}
+                                onChange={(e) => {
+                                  const nextSectionId = e.target.value || null
+                                  run(() =>
+                                    updateProjectTask(task.id, {
+                                      title: task.title,
+                                      status: task.status as any,
+                                      startAt: datetimeInput(task.startAt) || null,
+                                      dueDate: datetimeInput(task.dueDate) || null,
+                                      reminderDays: task.reminderDays,
+                                      note: task.note || undefined,
+                                      sectionId: nextSectionId,
+                                      assigneeIds: getTaskAssigneeIds(task),
+                                    })
+                                  )
+                                }}
+                                className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                              >
+                                {sectionOptions.map((opt) => (
+                                  <option key={opt.id || 'none'} value={opt.id}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <div className="mb-2 text-xs font-medium text-gray-500">
+                                {t('projectTaskContent')}
+                              </div>
                               <textarea
                                 value={taskContentDrafts[task.id] ?? task.content ?? ''}
                                 onChange={(e) =>
@@ -2061,106 +2197,108 @@ export default function ProjectDetailClient({
                                   {t('saveProjectTaskContent')}
                                 </button>
                               </div>
-                            </>
-                          ) : (
-                            <div className="whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-sm text-gray-800 shadow-sm">
-                              {task.content || '—'}
-                              {taskScheduleLabel(task) ? (
-                                <div className="mt-2 text-xs text-gray-500">
-                                  {taskScheduleLabel(task)}
-                                </div>
-                              ) : null}
                             </div>
-                          )}
-                        </div>
 
-                        <div className="space-y-2">
-                          <div className="text-xs font-medium text-gray-500">
-                            {t('projectTaskAttachments')}
-                          </div>
-                          {(task.attachments || []).length === 0 ? (
-                            <div className="text-xs text-gray-400">{t('projectTaskEmpty')}</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {(task.attachments || []).map((att, idx) => (
-                                <button
-                                  key={att.id}
-                                  type="button"
-                                  onClick={() => openAttachment(att.fileUrl)}
-                                  className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
-                                >
-                                  {att.note || `${t('attachment')} ${idx + 1}`}
-                                </button>
-                              ))}
+                            <div className="space-y-2">
+                              <div className="text-xs font-medium text-gray-500">
+                                {t('projectTaskAttachments')}
+                              </div>
+                              <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-[#007AFF] shadow-sm">
+                                {t('addAttachment')}
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0]
+                                    if (!file) return
+                                    const files = await prepareUploadFiles(file)
+                                    e.target.value = ''
+                                    for (const item of files) {
+                                      await run(() =>
+                                        addProjectTaskAttachment(task.id, {
+                                          url: item.url,
+                                          size: item.size,
+                                          note: item.note,
+                                        })
+                                      )
+                                    }
+                                  }}
+                                />
+                              </label>
                             </div>
-                          )}
-                          {isFullMember ? (
-                            <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-[#007AFF] shadow-sm">
-                              {t('addAttachment')}
-                              <input
-                                type="file"
-                                accept="image/*,application/pdf"
-                                className="hidden"
-                                onChange={async (e) => {
-                                  const file = e.target.files?.[0]
-                                  if (!file) return
-                                  const files = await prepareUploadFiles(file)
-                                  e.target.value = ''
-                                  for (const item of files) {
-                                    await run(() =>
-                                      addProjectTaskAttachment(task.id, {
-                                        url: item.url,
-                                        size: item.size,
-                                        note: item.note,
+
+                            {canMemo ? (
+                              <>
+                                <textarea
+                                  value={taskMemoDraft}
+                                  onChange={(e) => setTaskMemoDraft(e.target.value)}
+                                  rows={3}
+                                  placeholder={t('projectTaskMemoPlaceholder')}
+                                  className="w-full rounded-xl border border-gray-100 bg-white px-3 py-2 text-sm outline-none"
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <label className="cursor-pointer rounded-lg bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-sm">
+                                    {t('addAttachment')}
+                                    <input
+                                      type="file"
+                                      accept="image/*,application/pdf"
+                                      className="hidden"
+                                      onChange={handleMemoFiles}
+                                    />
+                                  </label>
+                                  {taskMemoFiles.map((f, idx) => (
+                                    <span
+                                      key={`${f.url.slice(0, 24)}-${idx}`}
+                                      className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] text-[#4338CA]"
+                                    >
+                                      {f.note || `${t('attachment')} ${idx + 1}`}
+                                      <button
+                                        type="button"
+                                        className="ml-1 font-bold"
+                                        onClick={() =>
+                                          setTaskMemoFiles((prev) =>
+                                            prev.filter((_, i) => i !== idx)
+                                          )
+                                        }
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busy ||
+                                    (!taskMemoDraft.trim() && taskMemoFiles.length === 0)
+                                  }
+                                  onClick={async () => {
+                                    const ok = await run(() =>
+                                      addProjectTaskMemo(task.id, {
+                                        content: taskMemoDraft,
+                                        attachments: taskMemoFiles.map((f) => ({
+                                          url: f.url,
+                                          size: f.size,
+                                          note: f.note,
+                                        })),
                                       })
                                     )
-                                  }
-                                }}
-                              />
-                            </label>
-                          ) : null}
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="text-xs font-medium text-gray-500">
-                            {t('projectTaskMemos')}
+                                    if (ok) {
+                                      setTaskMemoDraft('')
+                                      setTaskMemoFiles([])
+                                    }
+                                  }}
+                                  className="w-full rounded-xl bg-[#007AFF] py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                                >
+                                  {t('appendProjectTaskMemo')}
+                                </button>
+                              </>
+                            ) : null}
                           </div>
-                          {(task.memos || []).length === 0 ? (
-                            <div className="text-xs text-gray-400">
-                              {t('projectTaskMemoEmpty')}
-                            </div>
-                          ) : (
-                            (task.memos || []).map((m) => (
-                              <div
-                                key={m.id}
-                                className="rounded-xl bg-white px-3 py-2 text-sm shadow-sm"
-                              >
-                                <div className="text-xs text-gray-400">
-                                  {m.author?.roleName || '—'} · {dayInput(m.createdAt)}
-                                </div>
-                                <div className="mt-1 whitespace-pre-wrap text-gray-800">
-                                  {m.content}
-                                </div>
-                                {m.attachments && m.attachments.length > 0 ? (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {m.attachments.map((att, idx) => (
-                                      <button
-                                        key={att.id}
-                                        type="button"
-                                        onClick={() => openAttachment(att.fileUrl)}
-                                        className="rounded-lg bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]"
-                                      >
-                                        {att.note || `${t('attachment')} ${idx + 1}`}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ))
-                          )}
-                        </div>
+                        ) : null}
 
-                        {canMemo ? (
+                        {!editing && canMemo && !isFullMember ? (
                           <>
                             <textarea
                               value={taskMemoDraft}
