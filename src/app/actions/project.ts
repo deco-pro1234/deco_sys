@@ -1877,6 +1877,114 @@ export async function addProjectSectionAttachment(
   }
 }
 
+async function assertCanManageProjectAttachment(attachmentId: string) {
+  const locale = await getCurrentLocale()
+  const t = createTranslator(locale)
+  const attachment = await prisma.attachment.findUnique({
+    where: { id: attachmentId },
+    select: {
+      id: true,
+      projectId: true,
+      projectTaskId: true,
+      projectSectionId: true,
+      projectLedgerEntryId: true,
+      memoId: true,
+      uploaderId: true,
+      projectLedgerEntry: {
+        select: { id: true, projectId: true, createdById: true },
+      },
+      memo: {
+        select: { id: true, projectId: true, projectTaskId: true, authorId: true },
+      },
+    },
+  })
+  if (!attachment?.projectId) {
+    throw new Error(t('attachmentNotFound'))
+  }
+
+  const isProjectScoped =
+    Boolean(attachment.projectTaskId) ||
+    Boolean(attachment.projectSectionId) ||
+    Boolean(attachment.projectLedgerEntryId) ||
+    Boolean(attachment.memoId && attachment.memo?.projectId)
+  if (!isProjectScoped) {
+    throw new Error(t('attachmentNotFound'))
+  }
+
+  const projectId =
+    attachment.projectId ||
+    attachment.projectLedgerEntry?.projectId ||
+    attachment.memo?.projectId
+  if (!projectId) {
+    throw new Error(t('attachmentNotFound'))
+  }
+
+  if (attachment.projectLedgerEntryId && attachment.projectLedgerEntry) {
+    const ctx = await assertProjectMember(projectId)
+    const canEditOthers = ctx.canViewFullLedger
+    if (
+      !canEditOthers &&
+      attachment.projectLedgerEntry.createdById !== ctx.session.userId &&
+      attachment.uploaderId !== ctx.session.userId
+    ) {
+      throw new Error(t('unauthorized'))
+    }
+    return { attachment, projectId, session: ctx.session }
+  }
+
+  if (attachment.memoId && attachment.memo) {
+    try {
+      const ctx = await assertProjectMember(projectId)
+      return { attachment, projectId, session: ctx.session }
+    } catch {
+      if (attachment.memo.projectTaskId) {
+        const { session } = await assertCanAddTaskMemo(attachment.memo.projectTaskId)
+        if (
+          attachment.memo.authorId !== session.userId &&
+          attachment.uploaderId !== session.userId &&
+          !session.isAdmin
+        ) {
+          throw new Error(t('unauthorized'))
+        }
+        return { attachment, projectId, session }
+      }
+      throw new Error(t('unauthorized'))
+    }
+  }
+
+  const ctx = await assertProjectMember(projectId)
+  return { attachment, projectId, session: ctx.session }
+}
+
+export async function deleteProjectAttachment(attachmentId: string) {
+  try {
+    const { projectId } = await assertCanManageProjectAttachment(attachmentId)
+    await prisma.attachment.delete({ where: { id: attachmentId } })
+    revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function updateProjectAttachmentNote(
+  attachmentId: string,
+  note: string
+) {
+  try {
+    const { projectId } = await assertCanManageProjectAttachment(attachmentId)
+    const trimmed = String(note || '').trim()
+    await prisma.attachment.update({
+      where: { id: attachmentId },
+      data: { note: trimmed || null },
+    })
+    revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 export async function addProjectTaskMemo(
   taskId: string,
   input: {
