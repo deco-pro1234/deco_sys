@@ -386,6 +386,8 @@ export default function ProjectDetailClient({
   )
   const [taskViewMode, setTaskViewMode] = useState<'focus' | 'all' | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [toolsPanel, setToolsPanel] = useState<'reminders' | 'pdf' | 'sections' | null>(null)
+  const [showAddTaskModal, setShowAddTaskModal] = useState(false)
   const deepLinkHandled = useRef<string | null>(null)
 
   const [title, setTitle] = useState(project.title)
@@ -413,6 +415,25 @@ export default function ProjectDetailClient({
   const [taskDue, setTaskDue] = useState('')
   const [taskSectionId, setTaskSectionId] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
+
+  const toggleToolsPanel = (key: 'reminders' | 'pdf' | 'sections') => {
+    setToolsPanel((prev) => (prev === key ? null : key))
+  }
+
+  const resetAddTaskForm = () => {
+    setTaskTitle('')
+    setTaskContent('')
+    setTaskStartAt('')
+    setTaskDue('')
+    setTaskSectionId('')
+    setTaskAssigneeIds([])
+  }
+
+  const closeAddTaskModal = () => {
+    setShowAddTaskModal(false)
+    resetAddTaskForm()
+  }
+
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const [taskMemoDraft, setTaskMemoDraft] = useState('')
   const [taskMemoFiles, setTaskMemoFiles] = useState<ClientAttachment[]>([])
@@ -1260,11 +1281,63 @@ export default function ProjectDetailClient({
 
       {activeTab === 'tasks' ? (
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-          {reminders.length > 0 ? (
-            <div className="space-y-1.5">
-              <div className="text-xs font-semibold text-[#9A3412]">
-                {t('projectRemindersInProject')}
-              </div>
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {reminders.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => toggleToolsPanel('reminders')}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    toolsPanel === 'reminders'
+                      ? 'bg-[#9A3412] text-white'
+                      : 'bg-[#FFF7ED] text-[#9A3412]'
+                  }`}
+                >
+                  {t('projectToolsReminders')} {reminders.length}
+                </button>
+              ) : null}
+              {isFullMember ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleToolsPanel('pdf')}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                      toolsPanel === 'pdf'
+                        ? 'bg-[#007AFF] text-white'
+                        : 'bg-[#F2F2F7] text-gray-700'
+                    }`}
+                  >
+                    {t('projectToolsPdf')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleToolsPanel('sections')}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                      toolsPanel === 'sections'
+                        ? 'bg-gray-900 text-white'
+                        : 'bg-[#F2F2F7] text-gray-700'
+                    }`}
+                  >
+                    {t('projectToolsSections')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setToolsPanel(null)
+                      setShowAddTaskModal(true)
+                    }}
+                    className="rounded-full bg-[#007AFF] px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    + {t('addProjectTask')}
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <p className="text-[11px] text-gray-400">{t('projectToolsHint')}</p>
+          </div>
+
+          {toolsPanel === 'reminders' && reminders.length > 0 ? (
+            <div className="space-y-1.5 rounded-2xl border border-[#FF9500]/20 bg-[#FFFBF5] p-3">
               <ProjectRemindersGrouped
                 locale={locale}
                 items={reminders}
@@ -1276,36 +1349,7 @@ export default function ProjectDetailClient({
             </div>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setTaskViewMode('focus')}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                effectiveTaskView === 'focus'
-                  ? 'bg-[#9A3412] text-white'
-                  : 'bg-[#F2F2F7] text-gray-600'
-              }`}
-            >
-              {t('projectTaskViewFocus')}
-              {focusTasks.length > 0 ? ` ${focusTasks.length}` : ''}
-            </button>
-            <button
-              type="button"
-              onClick={() => setTaskViewMode('all')}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                effectiveTaskView === 'all' ? 'bg-gray-900 text-white' : 'bg-[#F2F2F7] text-gray-600'
-              }`}
-            >
-              {t('projectTaskViewAll')}
-            </button>
-          </div>
-          {effectiveTaskView === 'focus' ? (
-            <p className="text-[11px] leading-relaxed text-gray-400">
-              {t('projectTaskViewFocusHint')}
-            </p>
-          ) : null}
-
-          {isFullMember ? (
+          {toolsPanel === 'pdf' && isFullMember ? (
             <div className="space-y-2 rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] p-3">
               <div className="text-xs font-semibold text-gray-600">{t('projectPdfExport')}</div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1367,197 +1411,111 @@ export default function ProjectDetailClient({
               </button>
             </div>
           ) : null}
-          {isFullMember ? (
-            <div className="space-y-3">
-              <div className="space-y-2 rounded-2xl bg-[#F8FAFC] p-3">
-                <div className="text-xs font-semibold text-gray-600">{t('projectSections')}</div>
-                <div className="flex gap-2">
-                  <input
-                    value={rootSectionTitle}
-                    onChange={(e) => setRootSectionTitle(e.target.value)}
-                    placeholder={t('projectSectionAddRoot')}
-                    className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                  />
-                  <button
-                    type="button"
-                    disabled={busy || !rootSectionTitle.trim()}
-                    onClick={async () => {
-                      const ok = await run(() =>
-                        createProjectSection(project.id, { title: rootSectionTitle })
-                      )
-                      if (ok) setRootSectionTitle('')
-                    }}
-                    className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                  >
-                    {t('projectSectionAddRoot')}
-                  </button>
-                </div>
-                {rootSections.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <select
-                        value={childParentId}
-                        onChange={(e) => {
-                          setChildParentTouched(true)
-                          setChildParentId(e.target.value)
-                        }}
-                        className="rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                      >
-                        <option value="">{t('projectSectionSelectParent')}</option>
-                        {rootSections.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.title}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        value={childSectionTitle}
-                        onChange={(e) => setChildSectionTitle(e.target.value)}
-                        placeholder={t('projectSectionTitlePlaceholder')}
-                        className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                      />
-                      <button
-                        type="button"
-                        disabled={busy || !childParentId || !childSectionTitle.trim()}
-                        onClick={async () => {
-                          const ok = await run(() =>
-                            createProjectSection(project.id, {
-                              title: childSectionTitle,
-                              parentId: childParentId,
-                            })
-                          )
-                          if (ok) {
-                            setChildSectionTitle('')
-                          }
-                        }}
-                        className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                      >
-                        {t('projectSectionAddChild')}
-                      </button>
-                    </div>
-                    {!childParentId && childSectionTitle.trim() ? (
-                      <div className="text-[11px] text-amber-600">
-                        {t('projectSectionChildHint')}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
 
-              <div className="space-y-2">
-              <input
-                value={taskTitle}
-                onChange={(e) => setTaskTitle(e.target.value)}
-                placeholder={t('projectTaskTitlePlaceholder')}
-                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              />
-              <textarea
-                value={taskContent}
-                onChange={(e) => setTaskContent(e.target.value)}
-                placeholder={t('projectTaskContentPlaceholder')}
-                rows={3}
-                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              />
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      const prev = latestSiblingEndAt(project.tasks || [], taskSectionId || null)
-                      if (!prev) return
-                      setTaskStartAt(datetimeInput(prev))
-                    }}
-                    className="text-[11px] font-semibold text-[#007AFF] disabled:opacity-50"
-                  >
-                    {t('projectTaskContinueFromPrevious')}
-                  </button>
-                </div>
+          {toolsPanel === 'sections' && isFullMember ? (
+            <div className="space-y-2 rounded-2xl bg-[#F8FAFC] p-3">
+              <div className="text-xs font-semibold text-gray-600">{t('projectSections')}</div>
+              <div className="flex gap-2">
                 <input
-                  type="datetime-local"
-                  value={taskStartAt}
-                  onChange={(e) => setTaskStartAt(e.target.value)}
-                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                  value={rootSectionTitle}
+                  onChange={(e) => setRootSectionTitle(e.target.value)}
+                  placeholder={t('projectSectionAddRoot')}
+                  className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
                 />
+                <button
+                  type="button"
+                  disabled={busy || !rootSectionTitle.trim()}
+                  onClick={async () => {
+                    const ok = await run(() =>
+                      createProjectSection(project.id, { title: rootSectionTitle })
+                    )
+                    if (ok) setRootSectionTitle('')
+                  }}
+                  className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {t('projectSectionAddRoot')}
+                </button>
               </div>
-              <div>
-                <div className="mb-1 text-xs font-medium text-gray-500">{t('projectTaskDueAt')}</div>
-                <input
-                  type="datetime-local"
-                  value={taskDue}
-                  onChange={(e) => setTaskDue(e.target.value)}
-                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-                />
-                <div className="mt-1 text-[11px] text-gray-400">{t('projectTaskTimeOptional')}</div>
-              </div>
-              <select
-                value={taskSectionId}
-                onChange={(e) => {
-                  const nextSection = e.target.value
-                  setTaskSectionId(nextSection)
-                  if (!taskStartAt) {
-                    const prev = latestSiblingEndAt(project.tasks || [], nextSection || null)
-                    if (prev) setTaskStartAt(datetimeInput(prev))
-                  }
-                }}
-                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              >
-                {sectionOptions.map((opt) => (
-                  <option key={opt.id || 'none'} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <div>
-                <div className="mb-2 text-xs font-medium text-gray-500">
-                  {t('projectTaskAssignees')}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {project.members.map((m) => (
-                    <button
-                      key={m.userId}
-                      type="button"
-                      onClick={() => toggleCreateAssignee(m.userId)}
-                      className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                        taskAssigneeIds.includes(m.userId)
-                          ? 'bg-[#007AFF] text-white'
-                          : 'bg-[#F2F2F7] text-gray-600'
-                      }`}
+              {rootSections.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      value={childParentId}
+                      onChange={(e) => {
+                        setChildParentTouched(true)
+                        setChildParentId(e.target.value)
+                      }}
+                      className="rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
                     >
-                      {m.user?.roleName || m.userId}
+                      <option value="">{t('projectSectionSelectParent')}</option>
+                      {rootSections.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.title}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={childSectionTitle}
+                      onChange={(e) => setChildSectionTitle(e.target.value)}
+                      placeholder={t('projectSectionTitlePlaceholder')}
+                      className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !childParentId || !childSectionTitle.trim()}
+                      onClick={async () => {
+                        const ok = await run(() =>
+                          createProjectSection(project.id, {
+                            title: childSectionTitle,
+                            parentId: childParentId,
+                          })
+                        )
+                        if (ok) {
+                          setChildSectionTitle('')
+                        }
+                      }}
+                      className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {t('projectSectionAddChild')}
                     </button>
-                  ))}
+                  </div>
+                  {!childParentId && childSectionTitle.trim() ? (
+                    <div className="text-[11px] text-amber-600">
+                      {t('projectSectionChildHint')}
+                    </div>
+                  ) : null}
                 </div>
-              </div>
-              <button
-                type="button"
-                disabled={busy || !taskTitle.trim()}
-                onClick={async () => {
-                  const ok = await run(() =>
-                    createProjectTask(project.id, {
-                      title: taskTitle,
-                      content: taskContent || null,
-                      startAt: taskStartAt || null,
-                      dueDate: taskDue || null,
-                      sectionId: taskSectionId || null,
-                      assigneeIds: taskAssigneeIds,
-                    })
-                  )
-                  if (ok) {
-                    setTaskTitle('')
-                    setTaskContent('')
-                    setTaskStartAt('')
-                    setTaskDue('')
-                    setTaskAssigneeIds([])
-                  }
-                }}
-                className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {t('addProjectTask')}
-              </button>
-              </div>
+              ) : null}
             </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setTaskViewMode('focus')}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                effectiveTaskView === 'focus'
+                  ? 'bg-[#9A3412] text-white'
+                  : 'bg-[#F2F2F7] text-gray-600'
+              }`}
+            >
+              {t('projectTaskViewFocus')}
+              {focusTasks.length > 0 ? ` ${focusTasks.length}` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTaskViewMode('all')}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                effectiveTaskView === 'all' ? 'bg-gray-900 text-white' : 'bg-[#F2F2F7] text-gray-600'
+              }`}
+            >
+              {t('projectTaskViewAll')}
+            </button>
+          </div>
+          {effectiveTaskView === 'focus' ? (
+            <p className="text-[11px] leading-relaxed text-gray-400">
+              {t('projectTaskViewFocusHint')}
+            </p>
           ) : null}
 
           <div className="divide-y divide-gray-100">
@@ -3167,6 +3125,152 @@ export default function ProjectDetailClient({
           >
             {t('deleteProject')}
           </button>
+        </div>
+      ) : null}
+
+      {showAddTaskModal && isFullMember ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('addProjectTask')}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeAddTaskModal()
+          }}
+        >
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">{t('addProjectTask')}</h2>
+                <p className="mt-1 text-xs text-gray-400">{t('projectAddTaskModalHint')}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeAddTaskModal}
+                className="rounded-full bg-[#F2F2F7] px-3 py-1 text-xs font-semibold text-gray-600"
+              >
+                {t('close')}
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <input
+                value={taskTitle}
+                onChange={(e) => setTaskTitle(e.target.value)}
+                placeholder={t('projectTaskTitlePlaceholder')}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                autoFocus
+              />
+              <textarea
+                value={taskContent}
+                onChange={(e) => setTaskContent(e.target.value)}
+                placeholder={t('projectTaskContentPlaceholder')}
+                rows={3}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const prev = latestSiblingEndAt(project.tasks || [], taskSectionId || null)
+                      if (!prev) return
+                      setTaskStartAt(datetimeInput(prev))
+                    }}
+                    className="text-[11px] font-semibold text-[#007AFF] disabled:opacity-50"
+                  >
+                    {t('projectTaskContinueFromPrevious')}
+                  </button>
+                </div>
+                <input
+                  type="datetime-local"
+                  value={taskStartAt}
+                  onChange={(e) => setTaskStartAt(e.target.value)}
+                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">{t('projectTaskDueAt')}</div>
+                <input
+                  type="datetime-local"
+                  value={taskDue}
+                  onChange={(e) => setTaskDue(e.target.value)}
+                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                />
+                <div className="mt-1 text-[11px] text-gray-400">{t('projectTaskTimeOptional')}</div>
+              </div>
+              <select
+                value={taskSectionId}
+                onChange={(e) => {
+                  const nextSection = e.target.value
+                  setTaskSectionId(nextSection)
+                  if (!taskStartAt) {
+                    const prev = latestSiblingEndAt(project.tasks || [], nextSection || null)
+                    if (prev) setTaskStartAt(datetimeInput(prev))
+                  }
+                }}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              >
+                {sectionOptions.map((opt) => (
+                  <option key={opt.id || 'none'} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div>
+                <div className="mb-2 text-xs font-medium text-gray-500">
+                  {t('projectTaskAssignees')}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {project.members.map((m) => (
+                    <button
+                      key={m.userId}
+                      type="button"
+                      onClick={() => toggleCreateAssignee(m.userId)}
+                      className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                        taskAssigneeIds.includes(m.userId)
+                          ? 'bg-[#007AFF] text-white'
+                          : 'bg-[#F2F2F7] text-gray-600'
+                      }`}
+                    >
+                      {m.user?.roleName || m.userId}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={closeAddTaskModal}
+                  className="flex-1 rounded-xl bg-[#F2F2F7] py-3 text-sm font-semibold text-gray-700"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !taskTitle.trim()}
+                  onClick={async () => {
+                    const ok = await run(() =>
+                      createProjectTask(project.id, {
+                        title: taskTitle,
+                        content: taskContent || null,
+                        startAt: taskStartAt || null,
+                        dueDate: taskDue || null,
+                        sectionId: taskSectionId || null,
+                        assigneeIds: taskAssigneeIds,
+                      })
+                    )
+                    if (ok) closeAddTaskModal()
+                  }}
+                  className="flex-[2] rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {busy ? t('saving') : t('addProjectTask')}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
