@@ -162,9 +162,6 @@ const projectInclude = {
     orderBy: { createdAt: 'desc' as const },
     include: { author: { select: { roleName: true } } },
   },
-  checklistItems: {
-    orderBy: checklistItemOrder,
-  },
   attachments: {
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
