@@ -8,7 +8,9 @@ import type { ReminderItem } from '../actions/reminder'
 import ProjectRemindersGrouped from '@/components/ProjectRemindersGrouped'
 import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import {
+  addProjectChecklistItem,
   addProjectMemo,
+  addProjectTaskChecklistItem,
   addProjectTaskMemo,
   addProjectLedgerAttachment,
   addProjectSectionAttachment,
@@ -19,21 +21,26 @@ import {
   createProjectTempAccount,
   deleteProject,
   deleteProjectAttachment,
+  deleteProjectChecklistItem,
   deleteProjectLedgerEntry,
   deleteProjectSection,
   deleteProjectTask,
+  deleteProjectTaskChecklistItem,
   exportProjectPdf,
   exportProjectSectionPdf,
   exportProjectTaskPdf,
   removeUserProjectTaskAccess,
   setProjectMembers,
   setUserProjectSectionAccess,
+  toggleProjectChecklistItem,
+  toggleProjectTaskChecklistItem,
   updateProject,
   updateProjectAttachmentNote,
   updateProjectSection,
   updateProjectTask,
 } from '../actions/project'
 import {
+  checklistCompletionPercent,
   computeProjectCompletion,
   taskCompletionPercent,
   type ProjectCompletionStats,
@@ -89,6 +96,14 @@ type TaskMemo = {
   attachments?: FileAttachment[]
 }
 
+type ChecklistItem = {
+  id: string
+  title: string
+  done: boolean
+  completedAt?: string | Date | null
+  sortOrder?: number
+}
+
 type ProjectTask = {
   id: string
   title: string
@@ -97,6 +112,7 @@ type ProjectTask = {
   startAt?: string | Date | null
   dueDate?: string | Date | null
   reminderDays: number
+  completedAt?: string | Date | null
   note?: string | null
   sectionId?: string | null
   section?: { id: string; title: string; parentId?: string | null } | null
@@ -107,6 +123,7 @@ type ProjectTask = {
     user?: ContactUser | null
   }>
   createdBy?: { roleName?: string | null } | null
+  checklistItems?: ChecklistItem[]
   memos?: TaskMemo[]
   attachments?: FileAttachment[]
 }
@@ -163,6 +180,7 @@ type ProjectDetail = {
     user?: ContactUser | null
   }>
   tasks: ProjectTask[]
+  checklistItems?: ChecklistItem[]
   sections?: ProjectSection[]
   ledger: Array<{
     id: string
@@ -359,12 +377,31 @@ function daysDiffFromValue(dateValue?: string | Date | null) {
 
 function taskNeedsAction(task: { status: string; startAt?: string | Date | null; dueDate?: string | Date | null; reminderDays?: number }) {
   if (task.status === 'DONE') return false
-  const reminderDays = Number(task.reminderDays ?? 7) || 7
+  const reminderDays = Number(task.reminderDays ?? 7)
+  if (!Number.isFinite(reminderDays) || reminderDays <= 0) return false
   const diffs = [daysDiffFromValue(task.dueDate), daysDiffFromValue(task.startAt)].filter(
     (n): n is number => n !== null
   )
   if (diffs.length === 0) return false
   return Math.min(...diffs) <= reminderDays
+}
+
+function taskPercentOf(task: ProjectTask) {
+  return taskCompletionPercent({
+    status: task.status,
+    checklistItems: task.checklistItems,
+  })
+}
+
+function checklistDoneLabel(
+  t: (key: any) => string,
+  items: ChecklistItem[] | undefined
+) {
+  const list = items || []
+  const done = list.filter((item) => item.done).length
+  return t('projectChecklistDoneCount')
+    .replace('{{done}}', String(done))
+    .replace('{{total}}', String(list.length))
 }
 
 export default function ProjectDetailClient({
@@ -397,7 +434,7 @@ export default function ProjectDetailClient({
   const [status, setStatus] = useState(project.status)
   const [startDate, setStartDate] = useState(dayInput(project.startDate))
   const [endDate, setEndDate] = useState(dayInput(project.endDate))
-  const [reminderDays, setReminderDays] = useState(String(project.reminderDays || 15))
+  const [reminderDays, setReminderDays] = useState(String(project.reminderDays ?? 15))
   const [note, setNote] = useState(project.note || '')
   const [contactUserId, setContactUserId] = useState(project.contactUserId || '')
   const [selectedMembers, setSelectedMembers] = useState<ProjectMemberPick[]>(() =>
@@ -416,6 +453,12 @@ export default function ProjectDetailClient({
   const [taskContent, setTaskContent] = useState('')
   const [taskStartAt, setTaskStartAt] = useState('')
   const [taskDue, setTaskDue] = useState('')
+  const [taskReminderDays, setTaskReminderDays] = useState('7')
+  const [taskChecklistDraft, setTaskChecklistDraft] = useState('')
+  const [taskChecklistTitles, setTaskChecklistTitles] = useState<string[]>([])
+  const [projectChecklistDraft, setProjectChecklistDraft] = useState('')
+  const [taskChecklistDrafts, setTaskChecklistDrafts] = useState<Record<string, string>>({})
+  const [taskReminderDrafts, setTaskReminderDrafts] = useState<Record<string, string>>({})
   const [taskSectionId, setTaskSectionId] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
 
@@ -428,6 +471,9 @@ export default function ProjectDetailClient({
     setTaskContent('')
     setTaskStartAt('')
     setTaskDue('')
+    setTaskReminderDays('7')
+    setTaskChecklistDraft('')
+    setTaskChecklistTitles([])
     setTaskSectionId('')
     setTaskAssigneeIds([])
   }
@@ -728,8 +774,10 @@ export default function ProjectDetailClient({
           : tab
 
   const completion = useMemo(
-    () => project.completion || computeProjectCompletion(project.tasks || []),
-    [project.completion, project.tasks]
+    () =>
+      project.completion ||
+      computeProjectCompletion(project.tasks || [], project.checklistItems || []),
+    [project.completion, project.tasks, project.checklistItems]
   )
 
   const contactPhoneOf = (u?: ContactUser | null) =>
@@ -1248,13 +1296,24 @@ export default function ProjectDetailClient({
                 ? ` · ${t('projectContact')}: ${project.contactUser.roleName}`
                 : ''}
               {' '}
-              · {t('projectCompletion')}: {completion.percent}% ({completion.done}/
-              {completion.total})
+              · {t('projectCompletion')}: {completion.percent}%
+              {completion.total > 0
+                ? ` (${completion.done}/${completion.total})`
+                : ''}
+              {(completion.checklistTotal || 0) > 0
+                ? ` · ${t('projectChecklist')}: ${completion.checklistDone}/${completion.checklistTotal}`
+                : ''}
             </>
           ) : null}
         </div>
         {isFullMember ? (
           <>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-full rounded-full bg-[#007AFF] transition-all"
+                style={{ width: `${Math.min(100, Math.max(0, completion.percent))}%` }}
+              />
+            </div>
             <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
               <div className="rounded-xl bg-[#EEF2FF] px-2 py-2">
                 <div className="text-indigo-700/70">{t('projectCompletion')}</div>
@@ -1572,6 +1631,107 @@ export default function ProjectDetailClient({
             </div>
           ) : null}
 
+          {isFullMember ? (
+            <div className="space-y-2 rounded-2xl border border-gray-100 bg-[#F8FAFC] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-semibold text-gray-700">
+                  {t('projectChecklist')}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  {checklistDoneLabel(t, project.checklistItems)} ·{' '}
+                  {checklistCompletionPercent(project.checklistItems || [])}%
+                </div>
+              </div>
+              {(project.checklistItems || []).length === 0 ? (
+                <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {(project.checklistItems || []).map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-start gap-2 rounded-xl bg-white px-2.5 py-2 shadow-sm"
+                    >
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => run(() => toggleProjectChecklistItem(item.id))}
+                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${
+                          item.done
+                            ? 'border-emerald-500 bg-emerald-500 text-white'
+                            : 'border-gray-300 bg-white text-transparent'
+                        }`}
+                        aria-label={item.done ? t('projectTaskDone') : t('projectTaskTodo')}
+                      >
+                        ✓
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className={`text-sm ${
+                            item.done ? 'text-gray-400 line-through' : 'text-gray-800'
+                          }`}
+                        >
+                          {item.title}
+                        </div>
+                        {item.done && item.completedAt ? (
+                          <div className="mt-0.5 text-[10px] text-gray-400">
+                            {t('projectTaskCompletedAt')}:{' '}
+                            {formatDatetimeLabelHongKong(item.completedAt)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!confirm(t('confirmDeleteItem'))) return
+                          run(() => deleteProjectChecklistItem(item.id))
+                        }}
+                        className="shrink-0 text-[11px] font-semibold text-rose-500"
+                      >
+                        {t('delete')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={projectChecklistDraft}
+                  onChange={(e) => setProjectChecklistDraft(e.target.value)}
+                  placeholder={t('projectChecklistAddPlaceholder')}
+                  className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return
+                    e.preventDefault()
+                    const title = projectChecklistDraft.trim()
+                    if (!title || busy) return
+                    run(async () => {
+                      const res = await addProjectChecklistItem(project.id, title)
+                      if (res.success) setProjectChecklistDraft('')
+                      return res
+                    })
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={busy || !projectChecklistDraft.trim()}
+                  onClick={() => {
+                    const title = projectChecklistDraft.trim()
+                    if (!title) return
+                    run(async () => {
+                      const res = await addProjectChecklistItem(project.id, title)
+                      if (res.success) setProjectChecklistDraft('')
+                      return res
+                    })
+                  }}
+                  className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {t('projectChecklistAdd')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
             <button
               type="button"
@@ -1861,8 +2021,14 @@ export default function ProjectDetailClient({
                               </div>
                             ) : null}
                             <div className="mt-1 text-xs text-gray-500">
-                              {taskStatusLabel(task.status)} · {taskCompletionPercent(task.status)}%
+                              {taskStatusLabel(task.status)} · {taskPercentOf(task)}%
+                              {(task.checklistItems || []).length > 0
+                                ? ` · ${checklistDoneLabel(t, task.checklistItems)}`
+                                : ''}
                               {taskScheduleLabel(task) ? ` · ${taskScheduleLabel(task)}` : ''}
+                              {task.completedAt
+                                ? ` · ${t('projectTaskCompletedAt')} ${formatDatetimeLabelHongKong(task.completedAt)}`
+                                : ''}
                               {names ? ` · ${names}` : ''}
                               {task.attachments && task.attachments.length > 0
                                 ? ` · ${t('attachment')} ${task.attachments.length}`
@@ -1873,6 +2039,14 @@ export default function ProjectDetailClient({
                               {isTemp && !canMemo
                                 ? ` · ${t('projectTempAccessReadOnly')}`
                                 : ''}
+                            </div>
+                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                              <div
+                                className="h-full rounded-full bg-[#007AFF] transition-all"
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, taskPercentOf(task)))}%`,
+                                }}
+                              />
                             </div>
                             {memberContacts.length > 0 ? (
                               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -1894,30 +2068,6 @@ export default function ProjectDetailClient({
                       </button>
                       {isFullMember ? (
                         <div className="flex shrink-0 gap-1">
-                          {task.status !== 'DONE' ? (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() =>
-                                run(() =>
-                                  updateProjectTask(task.id, {
-                                    title: task.title,
-                                    status: task.status === 'TODO' ? 'DOING' : 'DONE',
-                                    startAt: datetimeInput(task.startAt) || null,
-                                    dueDate: datetimeInput(task.dueDate) || null,
-                                    reminderDays: task.reminderDays,
-                                    note: task.note || undefined,
-                                    assigneeIds: getTaskAssigneeIds(task),
-                                  })
-                                )
-                              }
-                              className="rounded-lg bg-[#F2F2F7] px-2 py-1 text-[11px] font-semibold text-gray-700"
-                            >
-                              {task.status === 'TODO'
-                                ? t('projectTaskStart')
-                                : t('projectTaskComplete')}
-                            </button>
-                          ) : null}
                           <button
                             type="button"
                             disabled={busy || pdfBusy}
@@ -1987,7 +2137,152 @@ export default function ProjectDetailClient({
                                 {taskScheduleLabel(task)}
                               </div>
                             ) : null}
+                            {task.completedAt ? (
+                              <div className="mt-1 text-xs text-emerald-700">
+                                {t('projectTaskCompletedAt')}:{' '}
+                                {formatDatetimeLabelHongKong(task.completedAt)}
+                              </div>
+                            ) : null}
                           </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-medium text-gray-500">
+                              {t('projectTaskChecklist')}
+                            </div>
+                            <div className="text-[11px] text-gray-500">
+                              {checklistDoneLabel(t, task.checklistItems)} · {taskPercentOf(task)}%
+                            </div>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-white">
+                            <div
+                              className="h-full rounded-full bg-[#007AFF] transition-all"
+                              style={{
+                                width: `${Math.min(100, Math.max(0, taskPercentOf(task)))}%`,
+                              }}
+                            />
+                          </div>
+                          {(task.checklistItems || []).length === 0 ? (
+                            <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {(task.checklistItems || []).map((item) => (
+                                <div
+                                  key={item.id}
+                                  className="flex items-start gap-2 rounded-xl bg-white px-2.5 py-2 shadow-sm"
+                                >
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      run(() => toggleProjectTaskChecklistItem(item.id))
+                                    }
+                                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${
+                                      item.done
+                                        ? 'border-emerald-500 bg-emerald-500 text-white'
+                                        : 'border-gray-300 bg-white text-transparent'
+                                    }`}
+                                    aria-label={
+                                      item.done ? t('projectTaskDone') : t('projectTaskTodo')
+                                    }
+                                  >
+                                    ✓
+                                  </button>
+                                  <div className="min-w-0 flex-1">
+                                    <div
+                                      className={`text-sm ${
+                                        item.done
+                                          ? 'text-gray-400 line-through'
+                                          : 'text-gray-800'
+                                      }`}
+                                    >
+                                      {item.title}
+                                    </div>
+                                    {item.done && item.completedAt ? (
+                                      <div className="mt-0.5 text-[10px] text-gray-400">
+                                        {t('projectTaskCompletedAt')}:{' '}
+                                        {formatDatetimeLabelHongKong(item.completedAt)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  {isFullMember ? (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => {
+                                        if (!confirm(t('confirmDeleteItem'))) return
+                                        run(() => deleteProjectTaskChecklistItem(item.id))
+                                      }}
+                                      className="shrink-0 text-[11px] font-semibold text-rose-500"
+                                    >
+                                      {t('delete')}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {isFullMember ? (
+                            <div className="flex gap-2">
+                              <input
+                                value={taskChecklistDrafts[task.id] || ''}
+                                onChange={(e) =>
+                                  setTaskChecklistDrafts((prev) => ({
+                                    ...prev,
+                                    [task.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder={t('projectChecklistAddPlaceholder')}
+                                className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                                onKeyDown={(e) => {
+                                  if (e.key !== 'Enter') return
+                                  e.preventDefault()
+                                  const title = (taskChecklistDrafts[task.id] || '').trim()
+                                  if (!title || busy) return
+                                  run(async () => {
+                                    const res = await addProjectTaskChecklistItem(
+                                      task.id,
+                                      title
+                                    )
+                                    if (res.success) {
+                                      setTaskChecklistDrafts((prev) => ({
+                                        ...prev,
+                                        [task.id]: '',
+                                      }))
+                                    }
+                                    return res
+                                  })
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={
+                                  busy || !(taskChecklistDrafts[task.id] || '').trim()
+                                }
+                                onClick={() => {
+                                  const title = (taskChecklistDrafts[task.id] || '').trim()
+                                  if (!title) return
+                                  run(async () => {
+                                    const res = await addProjectTaskChecklistItem(
+                                      task.id,
+                                      title
+                                    )
+                                    if (res.success) {
+                                      setTaskChecklistDrafts((prev) => ({
+                                        ...prev,
+                                        [task.id]: '',
+                                      }))
+                                    }
+                                    return res
+                                  })
+                                }}
+                                className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                              >
+                                {t('projectChecklistAdd')}
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
 
                         {!editing ? (
@@ -2126,7 +2421,6 @@ export default function ProjectDetailClient({
                                         run(() =>
                                           updateProjectTask(task.id, {
                                             title: task.title,
-                                            status: task.status as any,
                                             startAt: datetimeInput(task.startAt) || null,
                                             dueDate: datetimeInput(task.dueDate) || null,
                                             reminderDays: task.reminderDays,
@@ -2168,7 +2462,6 @@ export default function ProjectDetailClient({
                                   run(() =>
                                     updateProjectTask(task.id, {
                                       title: task.title,
-                                      status: task.status as any,
                                       startAt: datetimeInput(task.startAt) || null,
                                       dueDate: datetimeInput(task.dueDate) || null,
                                       reminderDays: task.reminderDays,
@@ -2244,6 +2537,30 @@ export default function ProjectDetailClient({
                                     {t('projectTaskTimeOptional')}
                                   </div>
                                 </div>
+                                <div>
+                                  <div className="mb-1 text-xs font-medium text-gray-500">
+                                    {t('projectTaskReminderDays')}
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={
+                                      taskReminderDrafts[task.id] ??
+                                      String(task.reminderDays ?? 7)
+                                    }
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      setTaskReminderDrafts((prev) => ({
+                                        ...prev,
+                                        [task.id]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
+                                  />
+                                  <div className="mt-1 text-[11px] text-gray-400">
+                                    {t('projectReminderDaysHint')}
+                                  </div>
+                                </div>
                                 <button
                                   type="button"
                                   disabled={busy}
@@ -2251,7 +2568,6 @@ export default function ProjectDetailClient({
                                     run(() =>
                                       updateProjectTask(task.id, {
                                         title: task.title,
-                                        status: task.status as any,
                                         startAt:
                                           (taskStartDrafts[task.id] ??
                                             datetimeInput(task.startAt)) ||
@@ -2260,7 +2576,11 @@ export default function ProjectDetailClient({
                                           (taskDueDrafts[task.id] ??
                                             datetimeInput(task.dueDate)) ||
                                           null,
-                                        reminderDays: task.reminderDays,
+                                        reminderDays: Number(
+                                          taskReminderDrafts[task.id] ??
+                                            task.reminderDays ??
+                                            7
+                                        ),
                                         content:
                                           taskContentDrafts[task.id] ?? task.content ?? null,
                                         assigneeIds: getTaskAssigneeIds(task),
@@ -3275,12 +3595,21 @@ export default function ProjectDetailClient({
               className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
             />
           </label>
-          <input
-            type="number"
-            value={reminderDays}
-            onChange={(e) => setReminderDays(e.target.value)}
-            className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-          />
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              {t('reminderDays')}
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={reminderDays}
+              onChange={(e) => setReminderDays(e.target.value)}
+              className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+            />
+            <span className="mt-1 block text-[11px] text-gray-400">
+              {t('projectReminderDaysHint')}
+            </span>
+          </label>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -3341,7 +3670,12 @@ export default function ProjectDetailClient({
                   status: status as any,
                   startDate: startDate || null,
                   endDate: endDate || null,
-                  reminderDays: Number(reminderDays) || 15,
+                  reminderDays:
+                    reminderDays.trim() === ''
+                      ? 15
+                      : Number.isNaN(Number(reminderDays))
+                        ? 15
+                        : Math.max(0, Math.floor(Number(reminderDays))),
                   note,
                   contactUserId: contactUserId || null,
                 })
@@ -3444,6 +3778,76 @@ export default function ProjectDetailClient({
                 />
                 <div className="mt-1 text-[11px] text-gray-400">{t('projectTaskTimeOptional')}</div>
               </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">
+                  {t('projectTaskReminderDays')}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  value={taskReminderDays}
+                  onChange={(e) => setTaskReminderDays(e.target.value)}
+                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                />
+                <div className="mt-1 text-[11px] text-gray-400">{t('projectReminderDaysHint')}</div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-gray-500">{t('projectTaskChecklist')}</div>
+                {taskChecklistTitles.length === 0 ? (
+                  <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
+                ) : (
+                  <div className="space-y-1">
+                    {taskChecklistTitles.map((item, index) => (
+                      <div
+                        key={`${item}-${index}`}
+                        className="flex items-center gap-2 rounded-xl bg-[#F2F2F7] px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 flex-1 text-gray-800">{item}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTaskChecklistTitles((prev) =>
+                              prev.filter((_, i) => i !== index)
+                            )
+                          }
+                          className="text-[11px] font-semibold text-rose-500"
+                        >
+                          {t('delete')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    value={taskChecklistDraft}
+                    onChange={(e) => setTaskChecklistDraft(e.target.value)}
+                    placeholder={t('projectChecklistAddPlaceholder')}
+                    className="min-w-0 flex-1 rounded-xl bg-[#F2F2F7] px-3 py-2 text-sm outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      const title = taskChecklistDraft.trim()
+                      if (!title) return
+                      setTaskChecklistTitles((prev) => [...prev, title])
+                      setTaskChecklistDraft('')
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!taskChecklistDraft.trim()}
+                    onClick={() => {
+                      const title = taskChecklistDraft.trim()
+                      if (!title) return
+                      setTaskChecklistTitles((prev) => [...prev, title])
+                      setTaskChecklistDraft('')
+                    }}
+                    className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    {t('projectChecklistAdd')}
+                  </button>
+                </div>
+              </div>
               <select
                 value={taskSectionId}
                 onChange={(e) => {
@@ -3501,8 +3905,10 @@ export default function ProjectDetailClient({
                         content: taskContent || null,
                         startAt: taskStartAt || null,
                         dueDate: taskDue || null,
+                        reminderDays: Number(taskReminderDays),
                         sectionId: taskSectionId || null,
                         assigneeIds: taskAssigneeIds,
+                        checklistTitles: taskChecklistTitles,
                       })
                     )
                     if (ok) closeAddTaskModal()
