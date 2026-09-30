@@ -31,6 +31,7 @@ import {
   exportProjectTaskPdf,
   removeUserProjectTaskAccess,
   setProjectMembers,
+  setProjectTaskDone,
   setUserProjectSectionAccess,
   toggleProjectChecklistItem,
   toggleProjectTaskChecklistItem,
@@ -2005,16 +2006,47 @@ export default function ProjectDetailClient({
                         }}
                       >
                         <div className="flex items-center gap-2">
-                          <span
-                            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#F2F2F7] text-[10px] font-bold text-gray-500 transition-transform ${
-                              expanded ? 'rotate-90' : ''
-                            }`}
-                            aria-hidden
-                          >
-                            ›
-                          </span>
+                          {(task.checklistItems || []).length === 0 &&
+                          (isFullMember || viewerIsAssignee) ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                run(() =>
+                                  setProjectTaskDone(task.id, task.status !== 'DONE')
+                                )
+                              }}
+                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${
+                                task.status === 'DONE'
+                                  ? 'border-emerald-500 bg-emerald-500 text-white'
+                                  : 'border-gray-300 bg-white text-transparent'
+                              }`}
+                              aria-label={t('projectTaskMarkDone')}
+                              title={t('projectTaskMarkDone')}
+                            >
+                              ✓
+                            </button>
+                          ) : (
+                            <span
+                              className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#F2F2F7] text-[10px] font-bold text-gray-500 transition-transform ${
+                                expanded ? 'rotate-90' : ''
+                              }`}
+                              aria-hidden
+                            >
+                              ›
+                            </span>
+                          )}
                           <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{task.title}</div>
+                            <div
+                              className={`font-medium ${
+                                task.status === 'DONE'
+                                  ? 'text-gray-400 line-through'
+                                  : 'text-gray-900'
+                              }`}
+                            >
+                              {task.title}
+                            </div>
                             {task.content ? (
                               <div className="mt-0.5 line-clamp-2 text-xs text-gray-600">
                                 {task.content}
@@ -2152,7 +2184,9 @@ export default function ProjectDetailClient({
                               {t('projectTaskChecklist')}
                             </div>
                             <div className="text-[11px] text-gray-500">
-                              {checklistDoneLabel(t, task.checklistItems)} · {taskPercentOf(task)}%
+                              {(task.checklistItems || []).length > 0
+                                ? `${checklistDoneLabel(t, task.checklistItems)} · ${taskPercentOf(task)}%`
+                                : `${taskPercentOf(task)}%`}
                             </div>
                           </div>
                           <div className="h-1.5 overflow-hidden rounded-full bg-white">
@@ -2164,7 +2198,41 @@ export default function ProjectDetailClient({
                             />
                           </div>
                           {(task.checklistItems || []).length === 0 ? (
-                            <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
+                            <div className="space-y-2">
+                              <div className="text-xs text-gray-400">
+                                {t('projectTaskMarkDoneHint')}
+                              </div>
+                              {isFullMember || viewerIsAssignee ? (
+                                <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-white px-2.5 py-2 shadow-sm">
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      run(() =>
+                                        setProjectTaskDone(task.id, task.status !== 'DONE')
+                                      )
+                                    }
+                                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${
+                                      task.status === 'DONE'
+                                        ? 'border-emerald-500 bg-emerald-500 text-white'
+                                        : 'border-gray-300 bg-white text-transparent'
+                                    }`}
+                                    aria-label={t('projectTaskMarkDone')}
+                                  >
+                                    ✓
+                                  </button>
+                                  <span
+                                    className={`text-sm ${
+                                      task.status === 'DONE'
+                                        ? 'text-gray-400 line-through'
+                                        : 'text-gray-800'
+                                    }`}
+                                  >
+                                    {t('projectTaskMarkDone')}
+                                  </span>
+                                </label>
+                              ) : null}
+                            </div>
                           ) : (
                             <div className="space-y-1.5">
                               {(task.checklistItems || []).map((item) => (
@@ -3746,6 +3814,29 @@ export default function ProjectDetailClient({
                 className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
               />
               <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">
+                  {t('projectTaskSection')}
+                </div>
+                <select
+                  value={taskSectionId}
+                  onChange={(e) => {
+                    const nextSection = e.target.value
+                    setTaskSectionId(nextSection)
+                    if (!taskStartAt) {
+                      const prev = latestSiblingEndAt(project.tasks || [], nextSection || null)
+                      if (prev) setTaskStartAt(datetimeInput(prev))
+                    }
+                  }}
+                  className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+                >
+                  {sectionOptions.map((opt) => (
+                    <option key={opt.id || 'none'} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <div className="text-xs font-medium text-gray-500">{t('projectTaskStartAt')}</div>
                   <button
@@ -3793,6 +3884,7 @@ export default function ProjectDetailClient({
               </div>
               <div className="space-y-2">
                 <div className="text-xs font-medium text-gray-500">{t('projectTaskChecklist')}</div>
+                <div className="text-[11px] text-gray-400">{t('projectTaskMarkDoneHint')}</div>
                 {taskChecklistTitles.length === 0 ? (
                   <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
                 ) : (
@@ -3848,24 +3940,6 @@ export default function ProjectDetailClient({
                   </button>
                 </div>
               </div>
-              <select
-                value={taskSectionId}
-                onChange={(e) => {
-                  const nextSection = e.target.value
-                  setTaskSectionId(nextSection)
-                  if (!taskStartAt) {
-                    const prev = latestSiblingEndAt(project.tasks || [], nextSection || null)
-                    if (prev) setTaskStartAt(datetimeInput(prev))
-                  }
-                }}
-                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
-              >
-                {sectionOptions.map((opt) => (
-                  <option key={opt.id || 'none'} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
               <div>
                 <div className="mb-2 text-xs font-medium text-gray-500">
                   {t('projectTaskAssignees')}

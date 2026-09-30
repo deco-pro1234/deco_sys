@@ -1809,6 +1809,51 @@ export async function deleteProjectTask(taskId: string) {
   }
 }
 
+/**
+ * Mark a whole task done/undone when it has no checklist items.
+ * Tasks with checklist items must be completed via checklist toggles.
+ */
+export async function setProjectTaskDone(taskId: string, done: boolean) {
+  try {
+    const task = await prisma.projectTask.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        projectId: true,
+        status: true,
+        completedAt: true,
+        _count: { select: { checklistItems: true } },
+      },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!task) return { success: false, error: t('projectTaskNotFound') }
+    const ctx = await assertCanViewProject(task.projectId)
+    if (ctx.accessMode !== 'full') {
+      const granted = ctx.taskGrants.some((g) => g.taskId === taskId)
+      if (!granted) return { success: false, error: t('unauthorized') }
+    }
+
+    if (task._count.checklistItems > 0) {
+      return { success: false, error: t('projectTaskDoneViaChecklist') }
+    }
+
+    const status: ProjectTaskStatus = done ? 'DONE' : 'TODO'
+    await prisma.projectTask.update({
+      where: { id: taskId },
+      data: {
+        status,
+        completedAt: done ? task.completedAt || new Date() : null,
+      },
+    })
+    await syncProjectCompletionFromTasks(task.projectId)
+    revalidateProjects(task.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 async function assertCanToggleTaskChecklist(taskId: string) {
   const task = await prisma.projectTask.findUnique({ where: { id: taskId } })
   const locale = await getCurrentLocale()
