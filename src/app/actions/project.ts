@@ -11,7 +11,11 @@ import {
   ACCOUNT_KIND_PROJECT_TEMP,
   ACCOUNT_KIND_STANDARD,
 } from '@/lib/access'
-import { computeProjectCompletion, taskCompletionPercent } from '@/lib/projects/completion'
+import {
+  computeProjectCompletion,
+  deriveTaskStatusFromChecklist,
+  taskCompletionPercent,
+} from '@/lib/projects/completion'
 import { normalizeContactPhoneInput } from '@/lib/whatsapp/phoneSync'
 import { parseDatetimeLocalHongKong } from '@/lib/datetime/hongKong'
 import { randomUUID } from 'crypto'
@@ -74,12 +78,20 @@ const contactUserSelect = {
   },
 } as const
 
+const checklistItemOrder = [
+  { sortOrder: 'asc' as const },
+  { createdAt: 'asc' as const },
+]
+
 const taskDetailInclude = {
   createdBy: { select: { id: true, roleName: true } },
   assignee: { select: contactUserSelect },
   assignees: {
     include: { user: { select: contactUserSelect } },
     orderBy: { createdAt: 'asc' as const },
+  },
+  checklistItems: {
+    orderBy: checklistItemOrder,
   },
   memos: {
     orderBy: { createdAt: 'desc' as const },
@@ -150,29 +162,75 @@ const projectInclude = {
     orderBy: { createdAt: 'desc' as const },
     include: { author: { select: { roleName: true } } },
   },
+  checklistItems: {
+    orderBy: checklistItemOrder,
+  },
   attachments: {
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
   },
 }
 
+/** reminderDays: 0 means no reminder; preserve 0 (do not coerce with || fallback). */
+function normalizeReminderDays(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === '') return fallback
+  const n = Number(value)
+  if (Number.isNaN(n) || n < 0) return fallback
+  return Math.floor(n)
+}
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+
+async function syncTaskStatusFromChecklist(
+  taskId: string,
+  tx: TxClient | typeof prisma = prisma
+) {
+  const task = await tx.projectTask.findUnique({
+    where: { id: taskId },
+    select: {
+      status: true,
+      completedAt: true,
+      checklistItems: { select: { done: true } },
+    },
+  })
+  if (!task) return null
+  const status = deriveTaskStatusFromChecklist(task.checklistItems, task.status)
+  const completedAt =
+    status === 'DONE'
+      ? task.completedAt || new Date()
+      : null
+  if (status !== task.status || (status === 'DONE') !== Boolean(task.completedAt)) {
+    await tx.projectTask.update({
+      where: { id: taskId },
+      data: { status, completedAt },
+    })
+  }
+  return status
+}
+
 /**
- * Keep project.status aligned with task completion:
- * - all tasks DONE → DONE (unless ARCHIVED)
- * - any incomplete task while status was DONE → ACTIVE
+ * Keep project.status aligned with task + project checklist completion:
+ * - all complete → DONE (unless ARCHIVED)
+ * - any incomplete while status was DONE → ACTIVE
  */
 async function syncProjectCompletionFromTasks(projectId: string) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: {
       status: true,
-      tasks: { select: { status: true } },
+      checklistItems: { select: { done: true } },
+      tasks: {
+        select: {
+          status: true,
+          checklistItems: { select: { done: true } },
+        },
+      },
     },
   })
   if (!project) return
   if (project.status === 'ARCHIVED') return
 
-  const stats = computeProjectCompletion(project.tasks)
+  const stats = computeProjectCompletion(project.tasks, project.checklistItems)
   if (stats.isComplete && project.status !== 'DONE') {
     await prisma.project.update({
       where: { id: projectId },
@@ -466,8 +524,15 @@ export async function getProjects() {
       _count: { select: { tasks: true, ledger: true } },
       ledger: { select: { type: true, amount: true, createdById: true } },
       tasks: {
-        select: { id: true, dueDate: true, reminderDays: true, status: true },
+        select: {
+          id: true,
+          dueDate: true,
+          reminderDays: true,
+          status: true,
+          checklistItems: { select: { done: true } },
+        },
       },
+      checklistItems: { select: { done: true } },
       sectionAccesses: session.isAdmin
         ? false
         : {
@@ -509,11 +574,20 @@ export async function getProjects() {
       const expense = visibleLedger
         .filter((e) => e.type === 'EXPENSE')
         .reduce((s, e) => s + e.amount, 0)
-      const { ledger: _ledger, sectionAccesses: _sectionAccesses, tasks: allTasks, ...rest } = p
+      const {
+        ledger: _ledger,
+        sectionAccesses: _sectionAccesses,
+        tasks: allTasks,
+        checklistItems: projectChecklist,
+        ...rest
+      } = p
       const scopedTasks = isFull
         ? allTasks
         : allTasks.filter((task) => grantedTaskIds.has(task.id))
-      const completion = computeProjectCompletion(scopedTasks)
+      const completion = computeProjectCompletion(
+        scopedTasks,
+        isFull ? projectChecklist : []
+      )
       const openTasks = scopedTasks.filter((task) => task.status !== 'DONE')
       const taskCount = scopedTasks.length
 
@@ -687,7 +761,8 @@ export async function getProjectDetail(projectId: string) {
       canViewFullLedger: false,
       memberRole: null as ProjectMemberRole | null,
       myTaskAccess,
-      completion: computeProjectCompletion(project.tasks),
+      checklistItems: [],
+      completion: computeProjectCompletion(project.tasks, []),
     }
   }
 
@@ -746,7 +821,7 @@ export async function getProjectDetail(projectId: string) {
     canViewFullLedger: ctx.canViewFullLedger,
     memberRole: ctx.memberRole,
     myTaskAccess: null as Record<string, { canView: boolean; canAddMemo: boolean }> | null,
-    completion: computeProjectCompletion(project.tasks),
+    completion: computeProjectCompletion(project.tasks, project.checklistItems),
   }
 }
 
@@ -1219,7 +1294,7 @@ export async function createProject(input: {
           status: input.status || 'PLANNING',
           startDate: input.startDate ? new Date(input.startDate) : null,
           endDate: input.endDate ? new Date(input.endDate) : null,
-          reminderDays: Number(input.reminderDays ?? 15) || 15,
+          reminderDays: normalizeReminderDays(input.reminderDays, 15),
           note: input.note?.trim() || null,
           ownerId: session.userId,
           contactUserId,
@@ -1281,7 +1356,7 @@ export async function updateProject(
               ? new Date(input.endDate)
               : null
             : undefined,
-        reminderDays: Number(input.reminderDays ?? 15) || 15,
+        reminderDays: normalizeReminderDays(input.reminderDays, 15),
         note: input.note?.trim() || null,
         ...(input.contactUserId !== undefined
           ? { contactUserId: input.contactUserId?.trim() || null }
@@ -1485,6 +1560,7 @@ export async function createProjectTask(
     sectionId?: string | null
     assigneeId?: string | null
     assigneeIds?: string[]
+    checklistTitles?: string[]
   }
 ) {
   try {
@@ -1524,6 +1600,14 @@ export async function createProjectTask(
         ? input.content?.trim() || null
         : input.note?.trim() || null
 
+    const checklistTitles = Array.from(
+      new Set(
+        (input.checklistTitles || [])
+          .map((row) => String(row || '').trim())
+          .filter(Boolean)
+      )
+    )
+
     await prisma.$transaction(async (tx) => {
       const created = await tx.projectTask.create({
         data: {
@@ -1534,7 +1618,7 @@ export async function createProjectTask(
           status: input.status || 'TODO',
           startAt,
           dueDate,
-          reminderDays: Number(input.reminderDays ?? 7) || 7,
+          reminderDays: normalizeReminderDays(input.reminderDays, 7),
           note: input.note?.trim() || null,
           assigneeId: assigneeIds[0] || null,
           createdById: session.userId,
@@ -1550,6 +1634,17 @@ export async function createProjectTask(
           skipDuplicates: true,
         })
       }
+
+      if (checklistTitles.length > 0) {
+        await tx.projectTaskChecklistItem.createMany({
+          data: checklistTitles.map((itemTitle, index) => ({
+            projectTaskId: created.id,
+            title: itemTitle,
+            sortOrder: index,
+          })),
+        })
+        await syncTaskStatusFromChecklist(created.id, tx)
+      }
     })
     await syncProjectCompletionFromTasks(projectId)
     revalidateProjects(projectId)
@@ -1564,7 +1659,8 @@ export async function updateProjectTask(
   input: {
     title: string
     content?: string | null
-    status: ProjectTaskStatus
+    /** Ignored when the task has checklist items (status is derived). */
+    status?: ProjectTaskStatus
     startAt?: string | null
     dueDate?: string | null
     reminderDays?: number
@@ -1620,13 +1716,34 @@ export async function updateProjectTask(
           ? [input.assigneeId]
           : undefined
 
+    const checklistCount = await prisma.projectTaskChecklistItem.count({
+      where: { projectTaskId: taskId },
+    })
+    const nextReminderDays =
+      input.reminderDays !== undefined
+        ? normalizeReminderDays(input.reminderDays, task.reminderDays)
+        : undefined
+    // Status is derived from checklist when items exist; otherwise honor optional input.
+    const nextStatus =
+      checklistCount > 0
+        ? undefined
+        : input.status !== undefined
+          ? input.status
+          : undefined
+
     await prisma.$transaction(async (tx) => {
       await tx.projectTask.update({
         where: { id: taskId },
         data: {
           title,
-          status: input.status,
-          reminderDays: Number(input.reminderDays ?? 7) || 7,
+          ...(nextStatus !== undefined
+            ? {
+                status: nextStatus,
+                completedAt:
+                  nextStatus === 'DONE' ? task.completedAt || new Date() : null,
+              }
+            : {}),
+          ...(nextReminderDays !== undefined ? { reminderDays: nextReminderDays } : {}),
           ...(input.startAt !== undefined ? { startAt: nextStartAt } : {}),
           ...(input.dueDate !== undefined ? { dueDate: nextDueDate } : {}),
           ...(input.content !== undefined
@@ -1663,6 +1780,10 @@ export async function updateProjectTask(
           }
         }
       }
+
+      if (checklistCount > 0) {
+        await syncTaskStatusFromChecklist(taskId, tx)
+      }
     })
     await syncProjectCompletionFromTasks(task.projectId)
     revalidateProjects(task.projectId)
@@ -1682,6 +1803,235 @@ export async function deleteProjectTask(taskId: string) {
     await prisma.projectTask.delete({ where: { id: taskId } })
     await syncProjectCompletionFromTasks(task.projectId)
     revalidateProjects(task.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+async function assertCanToggleTaskChecklist(taskId: string) {
+  const task = await prisma.projectTask.findUnique({ where: { id: taskId } })
+  const locale = await getCurrentLocale()
+  const t = createTranslator(locale)
+  if (!task) throw new Error(t('projectTaskNotFound'))
+  const ctx = await assertCanViewProject(task.projectId)
+  if (ctx.accessMode === 'full') {
+    return { task, session: ctx.session }
+  }
+  const granted = ctx.taskGrants.some((g) => g.taskId === taskId)
+  if (!granted) throw new Error(t('unauthorized'))
+  return { task, session: ctx.session }
+}
+
+export async function addProjectTaskChecklistItem(taskId: string, title: string) {
+  try {
+    const task = await prisma.projectTask.findUnique({ where: { id: taskId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!task) return { success: false, error: t('projectTaskNotFound') }
+    await assertProjectMember(task.projectId)
+    const text = String(title || '').trim()
+    if (!text) return { success: false, error: t('projectChecklistTitleRequired') }
+
+    const maxOrder = await prisma.projectTaskChecklistItem.aggregate({
+      where: { projectTaskId: taskId },
+      _max: { sortOrder: true },
+    })
+    await prisma.$transaction(async (tx) => {
+      await tx.projectTaskChecklistItem.create({
+        data: {
+          projectTaskId: taskId,
+          title: text,
+          sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+        },
+      })
+      await syncTaskStatusFromChecklist(taskId, tx)
+    })
+    await syncProjectCompletionFromTasks(task.projectId)
+    revalidateProjects(task.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function updateProjectTaskChecklistItem(
+  itemId: string,
+  input: { title?: string; done?: boolean }
+) {
+  try {
+    const item = await prisma.projectTaskChecklistItem.findUnique({
+      where: { id: itemId },
+      include: { projectTask: { select: { id: true, projectId: true } } },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+
+    const title =
+      input.title !== undefined ? String(input.title || '').trim() : undefined
+    if (title !== undefined && !title) {
+      return { success: false, error: t('projectChecklistTitleRequired') }
+    }
+
+    if (title !== undefined) {
+      await assertProjectMember(item.projectTask.projectId)
+    } else if (input.done !== undefined) {
+      await assertCanToggleTaskChecklist(item.projectTaskId)
+    } else {
+      return { success: false, error: t('submitFailed') }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectTaskChecklistItem.update({
+        where: { id: itemId },
+        data: {
+          ...(title !== undefined ? { title } : {}),
+          ...(input.done !== undefined
+            ? {
+                done: Boolean(input.done),
+                completedAt: input.done ? new Date() : null,
+              }
+            : {}),
+        },
+      })
+      await syncTaskStatusFromChecklist(item.projectTaskId, tx)
+    })
+    await syncProjectCompletionFromTasks(item.projectTask.projectId)
+    revalidateProjects(item.projectTask.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function toggleProjectTaskChecklistItem(itemId: string) {
+  try {
+    const item = await prisma.projectTaskChecklistItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, done: true, projectTaskId: true },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+    return updateProjectTaskChecklistItem(itemId, { done: !item.done })
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function deleteProjectTaskChecklistItem(itemId: string) {
+  try {
+    const item = await prisma.projectTaskChecklistItem.findUnique({
+      where: { id: itemId },
+      include: { projectTask: { select: { id: true, projectId: true } } },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+    await assertProjectMember(item.projectTask.projectId)
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectTaskChecklistItem.delete({ where: { id: itemId } })
+      await syncTaskStatusFromChecklist(item.projectTaskId, tx)
+    })
+    await syncProjectCompletionFromTasks(item.projectTask.projectId)
+    revalidateProjects(item.projectTask.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function addProjectChecklistItem(projectId: string, title: string) {
+  try {
+    await assertProjectMember(projectId)
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    const text = String(title || '').trim()
+    if (!text) return { success: false, error: t('projectChecklistTitleRequired') }
+
+    const maxOrder = await prisma.projectChecklistItem.aggregate({
+      where: { projectId },
+      _max: { sortOrder: true },
+    })
+    await prisma.projectChecklistItem.create({
+      data: {
+        projectId,
+        title: text,
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+      },
+    })
+    await syncProjectCompletionFromTasks(projectId)
+    revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function updateProjectChecklistItem(
+  itemId: string,
+  input: { title?: string; done?: boolean }
+) {
+  try {
+    const item = await prisma.projectChecklistItem.findUnique({ where: { id: itemId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+    await assertProjectMember(item.projectId)
+
+    const title =
+      input.title !== undefined ? String(input.title || '').trim() : undefined
+    if (title !== undefined && !title) {
+      return { success: false, error: t('projectChecklistTitleRequired') }
+    }
+
+    await prisma.projectChecklistItem.update({
+      where: { id: itemId },
+      data: {
+        ...(title !== undefined ? { title } : {}),
+        ...(input.done !== undefined
+          ? {
+              done: Boolean(input.done),
+              completedAt: input.done ? new Date() : null,
+            }
+          : {}),
+      },
+    })
+    await syncProjectCompletionFromTasks(item.projectId)
+    revalidateProjects(item.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function toggleProjectChecklistItem(itemId: string) {
+  try {
+    const item = await prisma.projectChecklistItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, done: true },
+    })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+    return updateProjectChecklistItem(itemId, { done: !item.done })
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function deleteProjectChecklistItem(itemId: string) {
+  try {
+    const item = await prisma.projectChecklistItem.findUnique({ where: { id: itemId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!item) return { success: false, error: t('projectChecklistNotFound') }
+    await assertProjectMember(item.projectId)
+    await prisma.projectChecklistItem.delete({ where: { id: itemId } })
+    await syncProjectCompletionFromTasks(item.projectId)
+    revalidateProjects(item.projectId)
     return { success: true }
   } catch (e: any) {
     return { success: false, error: e.message }
@@ -2045,6 +2395,8 @@ function getDaysDiff(dateValue: Date) {
 }
 
 function getReminderBucket(daysDiff: number, reminderDays: number): ReminderBucket | null {
+  // 0 = reminders disabled for this entity
+  if (reminderDays <= 0) return null
   if (daysDiff < 0) return 'overdue'
   if (daysDiff === 0) return 'today'
   if (daysDiff <= reminderDays) return 'upcoming'
@@ -2242,6 +2594,7 @@ function mapTaskForPdf(
     status: string
     startAt?: Date | null
     dueDate?: Date | null
+    checklistItems?: Array<{ done: boolean }> | null
     assignees?: Array<{
       user?: {
         roleName?: string | null
@@ -2309,7 +2662,10 @@ function mapTaskForPdf(
     title: task.title,
     content: task.content,
     status: task.status,
-    completionPercent: taskCompletionPercent(task.status),
+    completionPercent: taskCompletionPercent({
+      status: task.status,
+      checklistItems: task.checklistItems,
+    }),
     startAt: task.startAt,
     dueDate: task.dueDate,
     assignees: assigneeRows.map((a) => a!.label),
