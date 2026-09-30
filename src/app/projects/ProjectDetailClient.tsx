@@ -8,7 +8,6 @@ import type { ReminderItem } from '../actions/reminder'
 import ProjectRemindersGrouped from '@/components/ProjectRemindersGrouped'
 import { compressImage, MAX_PDF_PAGES, openAttachment, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import {
-  addProjectChecklistItem,
   addProjectMemo,
   addProjectTaskChecklistItem,
   addProjectTaskMemo,
@@ -21,7 +20,6 @@ import {
   createProjectTempAccount,
   deleteProject,
   deleteProjectAttachment,
-  deleteProjectChecklistItem,
   deleteProjectLedgerEntry,
   deleteProjectSection,
   deleteProjectTask,
@@ -33,7 +31,6 @@ import {
   setProjectMembers,
   setProjectTaskDone,
   setUserProjectSectionAccess,
-  toggleProjectChecklistItem,
   toggleProjectTaskChecklistItem,
   updateProject,
   updateProjectAttachmentNote,
@@ -41,7 +38,6 @@ import {
   updateProjectTask,
 } from '../actions/project'
 import {
-  checklistCompletionPercent,
   computeProjectCompletion,
   taskCompletionPercent,
   type ProjectCompletionStats,
@@ -181,7 +177,6 @@ type ProjectDetail = {
     user?: ContactUser | null
   }>
   tasks: ProjectTask[]
-  checklistItems?: ChecklistItem[]
   sections?: ProjectSection[]
   ledger: Array<{
     id: string
@@ -457,7 +452,6 @@ export default function ProjectDetailClient({
   const [taskReminderDays, setTaskReminderDays] = useState('7')
   const [taskChecklistDraft, setTaskChecklistDraft] = useState('')
   const [taskChecklistTitles, setTaskChecklistTitles] = useState<string[]>([])
-  const [projectChecklistDraft, setProjectChecklistDraft] = useState('')
   const [taskChecklistDrafts, setTaskChecklistDrafts] = useState<Record<string, string>>({})
   const [taskReminderDrafts, setTaskReminderDrafts] = useState<Record<string, string>>({})
   const [taskSectionId, setTaskSectionId] = useState('')
@@ -775,10 +769,8 @@ export default function ProjectDetailClient({
           : tab
 
   const completion = useMemo(
-    () =>
-      project.completion ||
-      computeProjectCompletion(project.tasks || [], project.checklistItems || []),
-    [project.completion, project.tasks, project.checklistItems]
+    () => project.completion || computeProjectCompletion(project.tasks || []),
+    [project.completion, project.tasks]
   )
 
   const contactPhoneOf = (u?: ContactUser | null) =>
@@ -1301,9 +1293,6 @@ export default function ProjectDetailClient({
               {completion.total > 0
                 ? ` (${completion.done}/${completion.total})`
                 : ''}
-              {(completion.checklistTotal || 0) > 0
-                ? ` · ${t('projectChecklist')}: ${completion.checklistDone}/${completion.checklistTotal}`
-                : ''}
             </>
           ) : null}
         </div>
@@ -1629,107 +1618,6 @@ export default function ProjectDetailClient({
                   ) : null}
                 </div>
               ) : null}
-            </div>
-          ) : null}
-
-          {isFullMember ? (
-            <div className="space-y-2 rounded-2xl border border-gray-100 bg-[#F8FAFC] p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-gray-700">
-                  {t('projectChecklist')}
-                </div>
-                <div className="text-[11px] text-gray-500">
-                  {checklistDoneLabel(t, project.checklistItems)} ·{' '}
-                  {checklistCompletionPercent(project.checklistItems || [])}%
-                </div>
-              </div>
-              {(project.checklistItems || []).length === 0 ? (
-                <div className="text-xs text-gray-400">{t('projectChecklistEmpty')}</div>
-              ) : (
-                <div className="space-y-1.5">
-                  {(project.checklistItems || []).map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-start gap-2 rounded-xl bg-white px-2.5 py-2 shadow-sm"
-                    >
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => run(() => toggleProjectChecklistItem(item.id))}
-                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${
-                          item.done
-                            ? 'border-emerald-500 bg-emerald-500 text-white'
-                            : 'border-gray-300 bg-white text-transparent'
-                        }`}
-                        aria-label={item.done ? t('projectTaskDone') : t('projectTaskTodo')}
-                      >
-                        ✓
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <div
-                          className={`text-sm ${
-                            item.done ? 'text-gray-400 line-through' : 'text-gray-800'
-                          }`}
-                        >
-                          {item.title}
-                        </div>
-                        {item.done && item.completedAt ? (
-                          <div className="mt-0.5 text-[10px] text-gray-400">
-                            {t('projectTaskCompletedAt')}:{' '}
-                            {formatDatetimeLabelHongKong(item.completedAt)}
-                          </div>
-                        ) : null}
-                      </div>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => {
-                          if (!confirm(t('confirmDeleteItem'))) return
-                          run(() => deleteProjectChecklistItem(item.id))
-                        }}
-                        className="shrink-0 text-[11px] font-semibold text-rose-500"
-                      >
-                        {t('delete')}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <input
-                  value={projectChecklistDraft}
-                  onChange={(e) => setProjectChecklistDraft(e.target.value)}
-                  placeholder={t('projectChecklistAddPlaceholder')}
-                  className="min-w-0 flex-1 rounded-xl bg-white px-3 py-2 text-sm outline-none shadow-sm"
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return
-                    e.preventDefault()
-                    const title = projectChecklistDraft.trim()
-                    if (!title || busy) return
-                    run(async () => {
-                      const res = await addProjectChecklistItem(project.id, title)
-                      if (res.success) setProjectChecklistDraft('')
-                      return res
-                    })
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={busy || !projectChecklistDraft.trim()}
-                  onClick={() => {
-                    const title = projectChecklistDraft.trim()
-                    if (!title) return
-                    run(async () => {
-                      const res = await addProjectChecklistItem(project.id, title)
-                      if (res.success) setProjectChecklistDraft('')
-                      return res
-                    })
-                  }}
-                  className="shrink-0 rounded-xl bg-[#007AFF] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  {t('projectChecklistAdd')}
-                </button>
-              </div>
             </div>
           ) : null}
 
