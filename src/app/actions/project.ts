@@ -162,9 +162,6 @@ const projectInclude = {
     orderBy: { createdAt: 'desc' as const },
     include: { author: { select: { roleName: true } } },
   },
-  checklistItems: {
-    orderBy: checklistItemOrder,
-  },
   attachments: {
     orderBy: { createdAt: 'desc' as const },
     include: { uploader: { select: { roleName: true } } },
@@ -218,7 +215,6 @@ async function syncProjectCompletionFromTasks(projectId: string) {
     where: { id: projectId },
     select: {
       status: true,
-      checklistItems: { select: { done: true } },
       tasks: {
         select: {
           status: true,
@@ -230,7 +226,7 @@ async function syncProjectCompletionFromTasks(projectId: string) {
   if (!project) return
   if (project.status === 'ARCHIVED') return
 
-  const stats = computeProjectCompletion(project.tasks, project.checklistItems)
+  const stats = computeProjectCompletion(project.tasks)
   if (stats.isComplete && project.status !== 'DONE') {
     await prisma.project.update({
       where: { id: projectId },
@@ -532,7 +528,6 @@ export async function getProjects() {
           checklistItems: { select: { done: true } },
         },
       },
-      checklistItems: { select: { done: true } },
       sectionAccesses: session.isAdmin
         ? false
         : {
@@ -578,16 +573,12 @@ export async function getProjects() {
         ledger: _ledger,
         sectionAccesses: _sectionAccesses,
         tasks: allTasks,
-        checklistItems: projectChecklist,
         ...rest
       } = p
       const scopedTasks = isFull
         ? allTasks
         : allTasks.filter((task) => grantedTaskIds.has(task.id))
-      const completion = computeProjectCompletion(
-        scopedTasks,
-        isFull ? projectChecklist : []
-      )
+      const completion = computeProjectCompletion(scopedTasks)
       const openTasks = scopedTasks.filter((task) => task.status !== 'DONE')
       const taskCount = scopedTasks.length
 
@@ -761,8 +752,7 @@ export async function getProjectDetail(projectId: string) {
       canViewFullLedger: false,
       memberRole: null as ProjectMemberRole | null,
       myTaskAccess,
-      checklistItems: [],
-      completion: computeProjectCompletion(project.tasks, []),
+      completion: computeProjectCompletion(project.tasks),
     }
   }
 
@@ -821,7 +811,7 @@ export async function getProjectDetail(projectId: string) {
     canViewFullLedger: ctx.canViewFullLedger,
     memberRole: ctx.memberRole,
     myTaskAccess: null as Record<string, { canView: boolean; canAddMemo: boolean }> | null,
-    completion: computeProjectCompletion(project.tasks, project.checklistItems),
+    completion: computeProjectCompletion(project.tasks),
   }
 }
 
