@@ -253,6 +253,9 @@ const messages = {
     projectTaskCompletedAt: '完成時間',
     projectReminderDaysHint: '0 = 不提醒',
     projectTaskReminderDays: '提前提醒（日）',
+    projectTaskMarkDone: '整項完成',
+    projectTaskMarkDoneHint: '尚未加入待辦小項時，可直接勾選整項完成；有小項後改以小項進度計算。',
+    projectTaskDoneViaChecklist: '此事項已有待辦小項，請勾選小項以更新完成度',
     projectTaskAssignees: '負責人',
     projectTaskAssigneesEdit: '編輯負責人',
     projectTaskNoAssignees: '尚未指定負責人',
@@ -1252,6 +1255,11 @@ const messages = {
     projectTaskCompletedAt: 'Completed at',
     projectReminderDaysHint: '0 = no reminder',
     projectTaskReminderDays: 'Reminder days',
+    projectTaskMarkDone: 'Mark task done',
+    projectTaskMarkDoneHint:
+      'With no checklist items, tick this to complete the whole task. After items are added, progress follows the checklist.',
+    projectTaskDoneViaChecklist:
+      'This task has checklist items — tick those items to update completion',
     projectTaskAssignees: 'Assignees',
     projectTaskAssigneesEdit: 'Edit assignees',
     projectTaskNoAssignees: 'No assignees yet',
