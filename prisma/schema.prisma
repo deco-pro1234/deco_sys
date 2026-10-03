@@ -54,6 +54,7 @@ model User {
   projectTaskAssignees ProjectTaskAssignee[] @relation("UserProjectTaskAssignees")
   projectTasksCreated  ProjectTask[]     @relation("UserCreatedProjectTasks")
   projectLedgerEntries ProjectLedgerEntry[] @relation("UserProjectLedgerEntries")
+  projectBudgetLines   ProjectBudgetLine[]  @relation("UserProjectBudgetLines")
   projectTaskAccesses  ProjectTaskAccess[]  @relation("UserProjectTaskAccess")
   projectTaskAccessesCreated ProjectTaskAccess[] @relation("UserCreatedProjectTaskAccess")
   projectSectionAccesses ProjectSectionAccess[] @relation("UserProjectSectionAccess")
@@ -529,6 +530,7 @@ model Project {
   tasks    ProjectTask[]
   sections ProjectSection[]
   ledger   ProjectLedgerEntry[]
+  budgetLines ProjectBudgetLine[]
   checklistItems ProjectChecklistItem[]
   taskAccesses ProjectTaskAccess[]
   sectionAccesses ProjectSectionAccess[]
@@ -537,6 +539,27 @@ model Project {
 
   @@index([status, endDate])
   @@index([contactUserId])
+}
+
+/** Planned income/expense lines for project budgeting (separate from actual ledger). */
+model ProjectBudgetLine {
+  id        String    @id @default(uuid())
+  type      String // INCOME | EXPENSE
+  amount    Float // HKD, always positive; sign inferred from type
+  title     String?
+  note      String?
+  date      DateTime?
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  projectId   String
+  createdById String
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("UserProjectBudgetLines", fields: [createdById], references: [id])
+
+  @@index([projectId, type, sortOrder])
 }
 
 /** Project-level todo / checklist item (completion drives project progress display). */

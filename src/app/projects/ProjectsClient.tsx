@@ -30,6 +30,12 @@ type ProjectListItem = {
     balanceHkd: number
     scoped?: boolean
   } | null
+  budgetSummary?: {
+    incomeHkd: number
+    expenseHkd: number
+    netHkd: number
+    lineCount: number
+  } | null
   accessMode?: 'full' | 'temp'
   memberRole?: 'OWNER' | 'MANAGER' | 'MEMBER' | null
   canViewFullLedger?: boolean
@@ -365,11 +371,21 @@ export default function ProjectsClient({
                 project.accessMode !== 'temp' &&
                 project.ledgerSummary &&
                 (project.canViewFullLedger || project.ledgerSummary.scoped) ? (
-                  <div className="mt-2 text-[11px] text-gray-400">
-                    {project.ledgerSummary.scoped
-                      ? t('projectLedgerMyScope')
-                      : t('projectLedgerBalance')}
-                    : {formatCurrency(locale, project.ledgerSummary.balanceHkd || 0)}
+                  <div className="mt-2 space-y-0.5 text-[11px] text-gray-400">
+                    <div>
+                      {project.ledgerSummary.scoped
+                        ? t('projectLedgerMyScope')
+                        : t('projectActualBalance')}
+                      : {formatCurrency(locale, project.ledgerSummary.balanceHkd || 0)}
+                    </div>
+                    {project.canViewFullLedger &&
+                    project.budgetSummary &&
+                    project.budgetSummary.lineCount > 0 ? (
+                      <div>
+                        {t('projectBudgetNet')}:{' '}
+                        {formatCurrency(locale, project.budgetSummary.netHkd || 0)}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </a>

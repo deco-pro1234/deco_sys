@@ -16,6 +16,7 @@ import {
   deriveTaskStatusFromChecklist,
   taskCompletionPercent,
 } from '@/lib/projects/completion'
+import { computeBudgetSummary } from '@/lib/projects/budget'
 import { normalizeContactPhoneInput } from '@/lib/whatsapp/phoneSync'
 import { parseDatetimeLocalHongKong } from '@/lib/datetime/hongKong'
 import { randomUUID } from 'crypto'
@@ -156,6 +157,15 @@ const projectInclude = {
         orderBy: { createdAt: 'asc' as const },
         include: { uploader: { select: { roleName: true } } },
       },
+    },
+  },
+  budgetLines: {
+    orderBy: [
+      { sortOrder: 'asc' as const },
+      { createdAt: 'asc' as const },
+    ],
+    include: {
+      createdBy: { select: { id: true, roleName: true } },
     },
   },
   memos: {
@@ -519,6 +529,7 @@ export async function getProjects() {
       },
       _count: { select: { tasks: true, ledger: true } },
       ledger: { select: { type: true, amount: true, createdById: true } },
+      budgetLines: { select: { type: true, amount: true } },
       tasks: {
         select: {
           id: true,
@@ -569,8 +580,11 @@ export async function getProjects() {
       const expense = visibleLedger
         .filter((e) => e.type === 'EXPENSE')
         .reduce((s, e) => s + e.amount, 0)
+      const budgetSummary =
+        isFull && canViewFullLedger ? computeBudgetSummary(p.budgetLines) : null
       const {
         ledger: _ledger,
+        budgetLines: _budgetLines,
         sectionAccesses: _sectionAccesses,
         tasks: allTasks,
         ...rest
@@ -608,6 +622,7 @@ export async function getProjects() {
               scoped: !canViewFullLedger,
             }
           : null,
+        budgetSummary,
       }
     })
   )
@@ -742,6 +757,8 @@ export async function getProjectDetail(projectId: string) {
       ...project,
       members: [],
       ledger: [],
+      budgetLines: [],
+      budgetSummary: null,
       memos: [],
       attachments: [],
       taskAccesses: [],
@@ -799,10 +816,16 @@ export async function getProjectDetail(projectId: string) {
   const ledger = ctx.canViewFullLedger
     ? project.ledger
     : project.ledger.filter((e) => e.createdById === ctx.session.userId)
+  const budgetLines = ctx.canViewFullLedger ? project.budgetLines : []
+  const budgetSummary = ctx.canViewFullLedger
+    ? computeBudgetSummary(budgetLines)
+    : null
 
   return {
     ...project,
     ledger,
+    budgetLines,
+    budgetSummary,
     taskAccesses: [],
     sectionAccesses: Array.isArray(project.sectionAccesses) ? project.sectionAccesses : [],
     accessMode: 'full' as const,
@@ -2149,6 +2172,122 @@ export async function deleteProjectLedgerEntry(entryId: string) {
   }
 }
 
+async function assertCanManageProjectBudget(projectId: string) {
+  const ctx = await assertProjectMember(projectId)
+  const locale = await getCurrentLocale()
+  const t = createTranslator(locale)
+  if (!ctx.canViewFullLedger) {
+    throw new Error(t('unauthorized'))
+  }
+  return ctx
+}
+
+export async function createProjectBudgetLine(
+  projectId: string,
+  input: {
+    type: ProjectLedgerType
+    amount: number
+    title?: string
+    note?: string
+    date?: string | null
+  }
+) {
+  try {
+    const { session } = await assertCanManageProjectBudget(projectId)
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    const amount = Math.abs(Number(input.amount))
+    if (!amount || Number.isNaN(amount)) {
+      return { success: false, error: t('projectLedgerAmountRequired') }
+    }
+    if (input.type !== 'INCOME' && input.type !== 'EXPENSE') {
+      return { success: false, error: t('projectLedgerTypeInvalid') }
+    }
+
+    const maxOrder = await prisma.projectBudgetLine.aggregate({
+      where: { projectId },
+      _max: { sortOrder: true },
+    })
+
+    await prisma.projectBudgetLine.create({
+      data: {
+        projectId,
+        type: input.type,
+        amount,
+        title: input.title?.trim() || null,
+        note: input.note?.trim() || null,
+        date: input.date ? new Date(input.date) : null,
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+        createdById: session.userId,
+      },
+    })
+    revalidateProjects(projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function updateProjectBudgetLine(
+  lineId: string,
+  input: {
+    type?: ProjectLedgerType
+    amount?: number
+    title?: string | null
+    note?: string | null
+    date?: string | null
+  }
+) {
+  try {
+    const line = await prisma.projectBudgetLine.findUnique({ where: { id: lineId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!line) return { success: false, error: t('projectBudgetNotFound') }
+    await assertCanManageProjectBudget(line.projectId)
+
+    if (input.type !== undefined && input.type !== 'INCOME' && input.type !== 'EXPENSE') {
+      return { success: false, error: t('projectLedgerTypeInvalid') }
+    }
+    const amount =
+      input.amount !== undefined ? Math.abs(Number(input.amount)) : undefined
+    if (amount !== undefined && (!amount || Number.isNaN(amount))) {
+      return { success: false, error: t('projectLedgerAmountRequired') }
+    }
+
+    await prisma.projectBudgetLine.update({
+      where: { id: lineId },
+      data: {
+        ...(input.type !== undefined ? { type: input.type } : {}),
+        ...(amount !== undefined ? { amount } : {}),
+        ...(input.title !== undefined ? { title: input.title?.trim() || null } : {}),
+        ...(input.note !== undefined ? { note: input.note?.trim() || null } : {}),
+        ...(input.date !== undefined
+          ? { date: input.date ? new Date(input.date) : null }
+          : {}),
+      },
+    })
+    revalidateProjects(line.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
+export async function deleteProjectBudgetLine(lineId: string) {
+  try {
+    const line = await prisma.projectBudgetLine.findUnique({ where: { id: lineId } })
+    const locale = await getCurrentLocale()
+    const t = createTranslator(locale)
+    if (!line) return { success: false, error: t('projectBudgetNotFound') }
+    await assertCanManageProjectBudget(line.projectId)
+    await prisma.projectBudgetLine.delete({ where: { id: lineId } })
+    revalidateProjects(line.projectId)
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message }
+  }
+}
+
 export async function addProjectLedgerAttachment(
   entryId: string,
   input: AttachmentPayload
@@ -2987,6 +3126,9 @@ export async function exportProjectPdf(
           orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
           include: { createdBy: { select: { roleName: true } } },
         },
+        budgetLines: {
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        },
         sectionAccesses: {
           where: {
             OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
@@ -3108,6 +3250,16 @@ export async function exportProjectPdf(
               content: e.content,
               note: e.note,
               createdBy: e.createdBy?.roleName || null,
+            }))
+          : undefined,
+      budgetLines:
+        mode === 'finance'
+          ? (project.budgetLines || []).map((e) => ({
+              type: e.type,
+              amount: e.amount,
+              title: e.title,
+              note: e.note,
+              date: e.date,
             }))
           : undefined,
       includeAttachments: mode === 'project' || mode === 'progress' ? includeAttachments : false,
