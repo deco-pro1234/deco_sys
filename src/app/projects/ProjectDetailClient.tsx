@@ -14,12 +14,14 @@ import {
   addProjectLedgerAttachment,
   addProjectSectionAttachment,
   addProjectTaskAttachment,
+  createProjectBudgetLine,
   createProjectLedgerEntry,
   createProjectSection,
   createProjectTask,
   createProjectTempAccount,
   deleteProject,
   deleteProjectAttachment,
+  deleteProjectBudgetLine,
   deleteProjectLedgerEntry,
   deleteProjectSection,
   deleteProjectTask,
@@ -42,6 +44,11 @@ import {
   taskCompletionPercent,
   type ProjectCompletionStats,
 } from '@/lib/projects/completion'
+import {
+  computeBudgetSummary,
+  computeFinanceVariance,
+  type ProjectBudgetSummary,
+} from '@/lib/projects/budget'
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import { normalizePhoneE164 } from '@/lib/whatsapp/phone'
@@ -189,6 +196,17 @@ type ProjectDetail = {
     createdBy?: { id?: string; roleName?: string | null } | null
     attachments?: FileAttachment[]
   }>
+  budgetLines?: Array<{
+    id: string
+    type: string
+    amount: number
+    title?: string | null
+    note?: string | null
+    date?: string | Date | null
+    createdById?: string
+    createdBy?: { id?: string; roleName?: string | null } | null
+  }>
+  budgetSummary?: ProjectBudgetSummary | null
   memos: Array<{
     id: string
     content: string
@@ -528,6 +546,11 @@ export default function ProjectDetailClient({
 
   const [ledgerType, setLedgerType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
   const [ledgerAmount, setLedgerAmount] = useState('')
+  const [budgetType, setBudgetType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE')
+  const [budgetAmount, setBudgetAmount] = useState('')
+  const [budgetTitle, setBudgetTitle] = useState('')
+  const [budgetNote, setBudgetNote] = useState('')
+  const [budgetDate, setBudgetDate] = useState('')
   const [ledgerDate, setLedgerDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [ledgerContent, setLedgerContent] = useState('')
   const [ledgerNote, setLedgerNote] = useState('')
@@ -941,6 +964,22 @@ export default function ProjectDetailClient({
     return { income, expense, balance: income - expense }
   }, [project.ledger])
 
+  const budgetSummary = useMemo(
+    () =>
+      project.budgetSummary ||
+      computeBudgetSummary(project.budgetLines || []),
+    [project.budgetSummary, project.budgetLines]
+  )
+
+  const financeVariance = useMemo(
+    () =>
+      computeFinanceVariance(
+        { incomeHkd: summary.income, expenseHkd: summary.expense },
+        budgetSummary
+      ),
+    [summary.income, summary.expense, budgetSummary]
+  )
+
   const projectStatusLabel = (s: string) => {
     const map: Record<string, string> = {
       PLANNING: t('projectStatusPlanning'),
@@ -1317,22 +1356,38 @@ export default function ProjectDetailClient({
               {canViewFullLedger ? (
                 <>
                   <div className="rounded-xl bg-[#ECFDF5] px-2 py-2">
-                    <div className="text-emerald-700/70">{t('income')}</div>
+                    <div className="text-emerald-700/70">{t('projectActualIncome')}</div>
                     <div className="font-semibold text-emerald-800">
                       {formatCurrency(locale, summary.income)}
                     </div>
+                    {budgetSummary.lineCount > 0 ? (
+                      <div className="mt-0.5 text-[10px] text-emerald-700/60">
+                        {t('projectBudget')}: {formatCurrency(locale, budgetSummary.incomeHkd)}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="rounded-xl bg-[#FEF2F2] px-2 py-2">
-                    <div className="text-rose-700/70">{t('expense')}</div>
+                    <div className="text-rose-700/70">{t('projectActualExpense')}</div>
                     <div className="font-semibold text-rose-800">
                       {formatCurrency(locale, summary.expense)}
                     </div>
+                    {budgetSummary.lineCount > 0 ? (
+                      <div className="mt-0.5 text-[10px] text-rose-700/60">
+                        {t('projectBudget')}: {formatCurrency(locale, budgetSummary.expenseHkd)}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="rounded-xl bg-[#F2F2F7] px-2 py-2">
-                    <div className="text-gray-400">{t('projectLedgerBalance')}</div>
+                    <div className="text-gray-400">{t('projectActualBalance')}</div>
                     <div className="font-semibold text-gray-800">
                       {formatCurrency(locale, summary.balance)}
                     </div>
+                    {budgetSummary.lineCount > 0 ? (
+                      <div className="mt-0.5 text-[10px] text-gray-400">
+                        {t('projectBudgetNet')}:{' '}
+                        {formatCurrency(locale, budgetSummary.netHkd)}
+                      </div>
+                    ) : null}
                   </div>
                 </>
               ) : (
@@ -1347,6 +1402,19 @@ export default function ProjectDetailClient({
                 </div>
               )}
             </div>
+            {canViewFullLedger && budgetSummary.lineCount > 0 ? (
+              <div className="mt-2 rounded-xl bg-[#FFF7ED] px-3 py-2 text-[11px] text-amber-900">
+                <span className="font-semibold">{t('projectBudgetVariance')}</span>
+                {' · '}
+                {t('income')}: {formatCurrency(locale, financeVariance.incomeVarianceHkd)}
+                {' · '}
+                {t('expense')}: {formatCurrency(locale, financeVariance.expenseVarianceHkd)}
+                {' · '}
+                {t('projectLedgerBalance')}:{' '}
+                {formatCurrency(locale, financeVariance.netVarianceHkd)}
+                <div className="mt-0.5 text-amber-800/70">{t('projectBudgetVarianceHint')}</div>
+              </div>
+            ) : null}
             <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
               {canViewFullLedger ? t('projectLedgerHint') : t('projectLedgerMemberHint')}
             </p>
@@ -2727,9 +2795,162 @@ export default function ProjectDetailClient({
       ) : null}
 
       {activeTab === 'ledger' && isFullMember ? (
+        <div className="space-y-4">
+          {canViewFullLedger ? (
+            <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800">
+                  {t('projectBudgetSection')}
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-gray-400">
+                  {t('projectBudgetHint')}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-xl bg-[#ECFDF5] px-2 py-2">
+                  <div className="text-emerald-700/70">{t('projectBudgetIncome')}</div>
+                  <div className="font-semibold text-emerald-800">
+                    {formatCurrency(locale, budgetSummary.incomeHkd)}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#FEF2F2] px-2 py-2">
+                  <div className="text-rose-700/70">{t('projectBudgetExpense')}</div>
+                  <div className="font-semibold text-rose-800">
+                    {formatCurrency(locale, budgetSummary.expenseHkd)}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#EEF2FF] px-2 py-2">
+                  <div className="text-indigo-700/70">{t('projectBudgetNet')}</div>
+                  <div className="font-semibold text-indigo-900">
+                    {formatCurrency(locale, budgetSummary.netHkd)}
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBudgetType('EXPENSE')}
+                  className={`rounded-xl py-2 text-sm font-semibold ${
+                    budgetType === 'EXPENSE'
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-[#F2F2F7] text-gray-600'
+                  }`}
+                >
+                  {t('projectBudgetExpense')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBudgetType('INCOME')}
+                  className={`rounded-xl py-2 text-sm font-semibold ${
+                    budgetType === 'INCOME'
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-[#F2F2F7] text-gray-600'
+                  }`}
+                >
+                  {t('projectBudgetIncome')}
+                </button>
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={budgetAmount}
+                onChange={(e) => setBudgetAmount(e.target.value)}
+                placeholder={t('projectLedgerAmountPlaceholder')}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+              <input
+                value={budgetTitle}
+                onChange={(e) => setBudgetTitle(e.target.value)}
+                placeholder={t('projectBudgetTitlePlaceholder')}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+              <input
+                type="date"
+                value={budgetDate}
+                onChange={(e) => setBudgetDate(e.target.value)}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+              <textarea
+                value={budgetNote}
+                onChange={(e) => setBudgetNote(e.target.value)}
+                rows={2}
+                placeholder={t('noteOptional')}
+                className="w-full rounded-xl bg-[#F2F2F7] px-4 py-3 text-sm outline-none"
+              />
+              <button
+                type="button"
+                disabled={busy || !budgetAmount}
+                onClick={async () => {
+                  const ok = await run(() =>
+                    createProjectBudgetLine(project.id, {
+                      type: budgetType,
+                      amount: Number(budgetAmount),
+                      title: budgetTitle,
+                      note: budgetNote,
+                      date: budgetDate || null,
+                    })
+                  )
+                  if (ok) {
+                    setBudgetAmount('')
+                    setBudgetTitle('')
+                    setBudgetNote('')
+                    setBudgetDate('')
+                  }
+                }}
+                className="w-full rounded-xl bg-[#007AFF] py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {t('projectBudgetAdd')}
+              </button>
+              <div className="divide-y divide-gray-100">
+                {(project.budgetLines || []).length === 0 ? (
+                  <div className="py-4 text-center text-sm text-gray-400">
+                    {t('projectBudgetEmpty')}
+                  </div>
+                ) : (
+                  (project.budgetLines || []).map((line) => (
+                    <div
+                      key={line.id}
+                      className="flex items-start justify-between gap-3 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-gray-900">
+                          {line.type === 'INCOME'
+                            ? t('projectBudgetIncome')
+                            : t('projectBudgetExpense')}{' '}
+                          {formatCurrency(locale, line.amount)}
+                        </div>
+                        {line.title ? (
+                          <div className="mt-0.5 text-xs font-medium text-gray-700">
+                            {line.title}
+                          </div>
+                        ) : null}
+                        <div className="text-xs text-gray-500">
+                          {line.date ? dayInput(line.date) : '—'}
+                          {line.note ? ` · ${line.note}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!confirm(t('confirmDeleteItem'))) return
+                          run(() => deleteProjectBudgetLine(line.id))
+                        }}
+                        className="shrink-0 rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600"
+                      >
+                        {t('delete')}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
         <div className="space-y-3 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-gray-800">{t('projectLedger')}</h2>
+            <h2 className="text-sm font-semibold text-gray-800">{t('projectActualSection')}</h2>
             <LocaleHelpTip
               locale={locale}
               titleKey="helpProjectLedgerTitle"
@@ -3010,6 +3231,7 @@ export default function ProjectDetailClient({
               })
             )}
           </div>
+        </div>
         </div>
       ) : null}
 

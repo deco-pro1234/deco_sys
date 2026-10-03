@@ -90,6 +90,13 @@ export type GenerateProjectPdfInput = {
   task?: ProjectPdfTask | null
   sections?: ProjectPdfSectionNode[]
   ledger?: ProjectPdfLedgerEntry[]
+  budgetLines?: Array<{
+    type: string
+    amount: number
+    title?: string | null
+    note?: string | null
+    date?: Date | string | null
+  }>
   includeAttachments: boolean
   locale: ProjectPdfLocale
 }
@@ -142,6 +149,17 @@ type Labels = {
   income: string
   expense: string
   balance: string
+  budgetIncome: string
+  budgetExpense: string
+  budgetNet: string
+  actualIncome: string
+  actualExpense: string
+  actualBalance: string
+  variance: string
+  budgetSection: string
+  actualSection: string
+  emptyBudget: string
+  colTitle: string
   colDate: string
   colType: string
   colAmount: string
@@ -200,6 +218,17 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
       income: 'Income',
       expense: 'Expense',
       balance: 'Balance',
+      budgetIncome: 'Budget income',
+      budgetExpense: 'Budget expense',
+      budgetNet: 'Budget net',
+      actualIncome: 'Actual income',
+      actualExpense: 'Actual expense',
+      actualBalance: 'Actual balance',
+      variance: 'Variance (actual − budget)',
+      budgetSection: 'Budget',
+      actualSection: 'Actual ledger',
+      emptyBudget: 'No budget lines',
+      colTitle: 'Item',
       colDate: 'Date',
       colType: 'Type',
       colAmount: 'Amount (HKD)',
@@ -256,6 +285,17 @@ function labelsFor(locale: ProjectPdfLocale): Labels {
     income: '收入',
     expense: '支出',
     balance: '結餘',
+    budgetIncome: '預計收入',
+    budgetExpense: '預計支出',
+    budgetNet: '預算淨額',
+    actualIncome: '實際收入',
+    actualExpense: '實際支出',
+    actualBalance: '實際結餘',
+    variance: '差異（實際 − 預算）',
+    budgetSection: '預算',
+    actualSection: '實際帳冊',
+    emptyBudget: '尚無預算項目',
+    colTitle: '項目',
     colDate: '日期',
     colType: '類型',
     colAmount: '金額（HKD）',
@@ -1115,47 +1155,147 @@ export function generateProjectPdf(input: GenerateProjectPdfInput): Uint8Array {
 
   if (input.mode === 'finance') {
     const ledger = input.ledger || []
+    const budgetLines = input.budgetLines || []
     const income = ledger.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0)
     const expense = ledger.filter((e) => e.type === 'EXPENSE').reduce((s, e) => s + e.amount, 0)
     const balance = income - expense
+    const budgetIncome = budgetLines
+      .filter((e) => e.type === 'INCOME')
+      .reduce((s, e) => s + e.amount, 0)
+    const budgetExpense = budgetLines
+      .filter((e) => e.type === 'EXPENSE')
+      .reduce((s, e) => s + e.amount, 0)
+    const budgetNet = budgetIncome - budgetExpense
     const fmt = (n: number) =>
       new Intl.NumberFormat(locale === 'en' ? 'en-HK' : 'zh-HK', {
         style: 'currency',
         currency: 'HKD',
         minimumFractionDigits: 2,
       }).format(n)
-    const finCards: Array<{ label: string; value: string; soft: Rgb; accent: Rgb }> = [
-      { label: L.income, value: fmt(income), soft: COLORS.doneSoft, accent: COLORS.done },
-      { label: L.expense, value: fmt(expense), soft: [254, 242, 242], accent: [244, 63, 94] },
+    const drawCardRow = (
+      cards: Array<{ label: string; value: string; soft: Rgb; accent: Rgb }>
+    ) => {
+      const gap = 8
+      const cardW = (maxWidth - gap * (cards.length - 1)) / cards.length
+      cards.forEach((c, i) => {
+        const cx = margin + i * (cardW + gap)
+        doc.setFillColor(...c.soft)
+        roundedRect(doc, cx, y, cardW, 34, 6, 'F')
+        doc.setFillColor(...c.accent)
+        doc.rect(cx, y, 3, 34, 'F')
+        doc.setFont(fontReg, 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor(...COLORS.muted)
+        doc.text(c.label, cx + 10, y + 12)
+        doc.setFont(fontBold, 'bold')
+        doc.setFontSize(10)
+        doc.setTextColor(...COLORS.slate)
+        doc.text(c.value, cx + 10, y + 26)
+      })
+      y += 44
+    }
+
+    if (budgetLines.length > 0) {
+      doc.setFont(fontBold, 'bold')
+      doc.setFontSize(11)
+      doc.setTextColor(...COLORS.slate)
+      doc.text(L.budgetSection, margin, y)
+      y += 8
+      drawCardRow([
+        {
+          label: L.budgetIncome,
+          value: fmt(budgetIncome),
+          soft: COLORS.doneSoft,
+          accent: COLORS.done,
+        },
+        {
+          label: L.budgetExpense,
+          value: fmt(budgetExpense),
+          soft: [254, 242, 242],
+          accent: [244, 63, 94],
+        },
+        {
+          label: L.budgetNet,
+          value: fmt(budgetNet),
+          soft: COLORS.brandSoft,
+          accent: budgetNet >= 0 ? COLORS.brand : [244, 63, 94],
+        },
+      ])
+    }
+
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(...COLORS.slate)
+    doc.text(L.actualSection, margin, y)
+    y += 8
+    drawCardRow([
+      { label: L.actualIncome, value: fmt(income), soft: COLORS.doneSoft, accent: COLORS.done },
       {
-        label: L.balance,
+        label: L.actualExpense,
+        value: fmt(expense),
+        soft: [254, 242, 242],
+        accent: [244, 63, 94],
+      },
+      {
+        label: L.actualBalance,
         value: fmt(balance),
         soft: COLORS.brandSoft,
         accent: balance >= 0 ? COLORS.brand : [244, 63, 94],
       },
-    ]
-    const gap = 8
-    const cardW = (maxWidth - gap * 2) / 3
-    finCards.forEach((c, i) => {
-      const cx = margin + i * (cardW + gap)
-      doc.setFillColor(...c.soft)
-      roundedRect(doc, cx, y, cardW, 34, 6, 'F')
-      doc.setFillColor(...c.accent)
-      doc.rect(cx, y, 3, 34, 'F')
+    ])
+
+    if (budgetLines.length > 0) {
       doc.setFont(fontReg, 'normal')
-      doc.setFontSize(7)
+      doc.setFontSize(9)
       doc.setTextColor(...COLORS.muted)
-      doc.text(c.label, cx + 10, y + 12)
+      doc.text(
+        `${L.variance}: ${L.income} ${fmt(income - budgetIncome)} · ${L.expense} ${fmt(
+          expense - budgetExpense
+        )} · ${L.balance} ${fmt(balance - budgetNet)}`,
+        margin,
+        y
+      )
+      y += 12
+    }
+
+    if (budgetLines.length > 0) {
       doc.setFont(fontBold, 'bold')
-      doc.setFontSize(10)
+      doc.setFontSize(11)
       doc.setTextColor(...COLORS.slate)
-      doc.text(c.value, cx + 10, y + 26)
-    })
-    y += 44
+      doc.text(L.budgetSection, margin, y)
+      y += 4
+      autoTable(doc, {
+        startY: y,
+        head: [[L.colType, L.colTitle, L.colAmount, L.colDate, L.note]],
+        body: budgetLines.map((e) => [
+          e.type === 'INCOME' ? L.income : L.expense,
+          e.title?.trim() || '—',
+          fmt(e.amount),
+          e.date ? formatDay(e.date) : '—',
+          e.note?.trim() || '—',
+        ]),
+        styles: { font: fontReg, fontSize: 8, cellPadding: 3.5, overflow: 'linebreak' },
+        headStyles: {
+          fillColor: COLORS.brand,
+          textColor: 255,
+          font: fontReg,
+          fontStyle: 'bold',
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        margin: { left: margin, right: margin },
+      })
+      y = ((doc as any).lastAutoTable?.finalY || y) + 12
+    }
+
+    doc.setFont(fontBold, 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(...COLORS.slate)
+    doc.text(L.actualSection, margin, y)
+    y += 4
     if (ledger.length === 0) {
       doc.setFont(fontReg, 'normal')
       doc.setTextColor(...COLORS.muted)
-      doc.text(L.emptyLedger, margin, y)
+      doc.text(L.emptyLedger, margin, y + 8)
     } else {
       const sorted = [...ledger].sort((a, b) => (timeMs(a.date) ?? 0) - (timeMs(b.date) ?? 0))
       autoTable(doc, {
