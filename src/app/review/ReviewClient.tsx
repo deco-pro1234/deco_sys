@@ -26,6 +26,7 @@ type EditForm = {
   type: 'INCOME' | 'EXPENSE'
   date: string
   amount: string
+  content: string
   note: string
   categoryId: string
   subCategoryId: string
@@ -44,6 +45,7 @@ function buildForm(record: any): EditForm {
     type: record.type === 'INCOME' ? 'INCOME' : 'EXPENSE',
     date: toDateInput(record.date || record.createdAt),
     amount: String(Math.abs(Number(record.amount) || 0)),
+    content: record.content || '',
     note: record.note || '',
     categoryId: record.categoryId || record.category?.id || '',
     subCategoryId: record.subCategoryId || record.subCategory?.id || '',
@@ -113,6 +115,7 @@ export default function ReviewClient({
       edits = {
         type: form.type,
         date: form.date,
+        content: form.content,
         note: form.note,
         amount,
         categoryId: form.categoryId,
@@ -375,6 +378,16 @@ export default function ReviewClient({
                       </div>
                     </div>
                     <div className="col-span-2">
+                      <span className="mb-1 block text-gray-500">{t('recordContent')}</span>
+                      <input
+                        type="text"
+                        value={form.content}
+                        onChange={(e) => setForm((prev) => (prev ? { ...prev, content: e.target.value } : prev))}
+                        placeholder={t('recordContentPlaceholder')}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div className="col-span-2">
                       <span className="mb-1 block text-gray-500">{t('note')}</span>
                       <textarea
                         rows={3}
@@ -413,6 +426,10 @@ export default function ReviewClient({
                       >
                         {formatCurrency(locale, modalRecord.amount)}
                       </span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="mb-1 block text-gray-500">{t('recordContent')}</span>
+                      <span className="font-semibold text-gray-900">{modalRecord.content || '-'}</span>
                     </div>
                     <div className="col-span-2">
                       <span className="mb-1 block text-gray-500">{t('note')}</span>

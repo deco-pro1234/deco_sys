@@ -9,6 +9,7 @@ import { createTranslator } from '@/lib/i18n'
 export type ReviewRecordEdits = {
   type?: 'INCOME' | 'EXPENSE'
   date?: string | Date
+  content?: string | null
   note?: string | null
   amount?: number
   categoryId?: string
@@ -62,6 +63,7 @@ function normalizeEdits(edits: ReviewRecordEdits | undefined, t: (key: any) => s
   const data: {
     type?: string
     date?: Date
+    content?: string | null
     note?: string | null
     amount?: number
     categoryId?: string
@@ -77,6 +79,9 @@ function normalizeEdits(edits: ReviewRecordEdits | undefined, t: (key: any) => s
     const date = edits.date instanceof Date ? edits.date : new Date(edits.date)
     if (Number.isNaN(date.getTime())) throw new Error(t('fillRequiredFields'))
     data.date = date
+  }
+  if (edits.content !== undefined) {
+    data.content = edits.content?.trim() || null
   }
   if (edits.note !== undefined) {
     data.note = edits.note?.trim() || null
@@ -121,6 +126,7 @@ export async function reviewRecord(
         ? {
             type: patch.type ?? record.type,
             date: patch.date ?? record.date,
+            content: patch.content !== undefined ? patch.content : record.content,
             note: patch.note !== undefined ? patch.note : record.note,
             amount: patch.amount ?? record.amount,
             categoryId: patch.categoryId ?? record.categoryId,
@@ -133,6 +139,7 @@ export async function reviewRecord(
         : {
             type: record.type,
             date: record.date,
+            content: record.content,
             note: record.note,
             amount: record.amount,
             categoryId: record.categoryId,
@@ -153,6 +160,7 @@ export async function reviewRecord(
           data: {
             type: effective.type,
             date: effective.date,
+            content: effective.content,
             note: effective.note,
             amount: effective.amount,
             categoryId: effective.categoryId,
@@ -166,6 +174,7 @@ export async function reviewRecord(
           patch.type != null && patch.type !== record.type ? `type→${patch.type}` : null,
           patch.amount != null && patch.amount !== record.amount ? `amount→${effective.amount}` : null,
           patch.poolId !== undefined && patch.poolId !== record.poolId ? 'pool changed' : null,
+          patch.content !== undefined && patch.content !== record.content ? 'content updated' : null,
           patch.note !== undefined && patch.note !== record.note ? 'note updated' : null,
           patch.categoryId && patch.categoryId !== record.categoryId ? 'category changed' : null,
           patch.date && patch.date.getTime() !== new Date(record.date).getTime() ? 'date changed' : null,
@@ -213,6 +222,7 @@ export async function reviewRecord(
               categoryId: effective.categoryId,
               subCategoryId: effective.subCategoryId,
               thirdCategoryId: effective.thirdCategoryId,
+              content: effective.content,
               note: effective.note,
               date: effective.date,
               type: effective.type,
