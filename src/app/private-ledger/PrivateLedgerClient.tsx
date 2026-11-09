@@ -1,14 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import React, { useEffect, useState } from 'react'
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import React, { useState } from 'react'
 import { createPrivateRecord, updatePrivateLedgerVisibility } from '../actions/private-record'
 import { createTranslator, formatCurrency, type Locale } from '@/lib/i18n'
 import { compressImage, MAX_PDF_PAGES, prepareAttachments, type ClientAttachment } from '@/lib/image'
 import OcrNoteButton, { type OcrResolvedPayload } from '@/components/OcrNoteButton'
 import PrivateRecordDetailModal from '../PrivateRecordDetailModal'
+import PrivateLedgerReportPanel from './PrivateLedgerReportPanel'
 import { FieldHelpLabel, LocaleHelpTip } from '@/components/HelpTip'
 
 type PrivateRecordItem = {
@@ -67,26 +66,6 @@ export default function PrivateLedgerClient({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [currentVisibility, setCurrentVisibility] = useState<'PRIVATE' | 'PUBLIC'>(visibility)
   const [isSavingVisibility, setIsSavingVisibility] = useState(false)
-  const [fontBase64, setFontBase64] = useState<string | null>(null)
-
-  useEffect(() => {
-    const loadFont = async () => {
-      try {
-        const res = await fetch('/fonts/NotoSansSC-Regular.ttf')
-        if (!res.ok) throw new Error('font not found')
-        const buffer = await res.arrayBuffer()
-        let binary = ''
-        const bytes = new Uint8Array(buffer)
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i])
-        }
-        setFontBase64(window.btoa(binary))
-      } catch (error) {
-        console.error('Private ledger font load failed:', error)
-      }
-    }
-    loadFont()
-  }, [])
 
   const handleImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -214,56 +193,6 @@ export default function PrivateLedgerClient({
     setIsSavingVisibility(false)
   }
 
-  const createPdfDoc = () => {
-    const doc = new jsPDF()
-    if (fontBase64) {
-      doc.addFileToVFS('NotoSansSC-Regular.ttf', fontBase64)
-      doc.addFont('NotoSansSC-Regular.ttf', 'NotoSansSC', 'normal')
-      doc.addFont('NotoSansSC-Regular.ttf', 'NotoSansSC', 'bold')
-      doc.setFont('NotoSansSC')
-    }
-    return doc
-  }
-
-  const exportPrivateLedgerPdf = () => {
-    if (initialRecords.length === 0) {
-      alert(t('noDataToExport'))
-      return
-    }
-
-    const doc = createPdfDoc()
-    const totalIncome = initialRecords.filter((item) => item.type === 'INCOME').reduce((sum, item) => sum + Math.abs(item.amount), 0)
-    const totalExpense = initialRecords.filter((item) => item.type === 'EXPENSE').reduce((sum, item) => sum + Math.abs(item.amount), 0)
-
-    if (fontBase64) doc.setFont('NotoSansSC', 'bold')
-    doc.setFontSize(18)
-    doc.text(t('privateLedgerPage'), 105, 18, { align: 'center' })
-
-    if (fontBase64) doc.setFont('NotoSansSC', 'normal')
-    doc.setFontSize(11)
-    doc.text(`${t('privateLedgerOwner')}: ${owner.roleName}`, 14, 30)
-    doc.text(`${t('totalIncome')}: ${totalIncome.toFixed(2)}`, 14, 38)
-    doc.text(`${t('totalExpense')}: ${totalExpense.toFixed(2)}`, 80, 38)
-    doc.text(`${t('balance')}: ${balance.toFixed(2)}`, 150, 38)
-
-    autoTable(doc, {
-      startY: 46,
-      head: [[t('date'), t('type'), t('category'), t('amount'), t('recordContent'), t('note')]],
-      body: initialRecords.map((item) => [
-        new Date(item.date).toLocaleDateString(locale === 'en' ? 'en-HK' : 'zh-HK'),
-        item.type === 'INCOME' ? t('income') : t('expense'),
-        item.customCategory?.trim() || [item.category?.name, item.subCategory?.name, item.thirdCategory?.name].filter(Boolean).join(' / ') || t('uncategorized'),
-        formatCurrency(locale, item.amount),
-        item.content || '-',
-        item.note || '-',
-      ]),
-      styles: { font: fontBase64 ? 'NotoSansSC' : 'helvetica' },
-      headStyles: { fillColor: [66, 139, 202], font: fontBase64 ? 'NotoSansSC' : 'helvetica' },
-    })
-
-    doc.save(locale === 'en' ? 'private-ledger.pdf' : '私帳報表.pdf')
-  }
-
   const inputClass = 'w-full rounded-xl border-transparent bg-white p-3 text-gray-900 shadow-sm outline-none transition-all placeholder-gray-400 focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/30'
 
   return (
@@ -280,11 +209,6 @@ export default function PrivateLedgerClient({
               />
             </h2>
             <p className="mt-2 text-sm text-gray-500">{t('privateLedgerPageHint')}</p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <button onClick={exportPrivateLedgerPdf} className="rounded-xl bg-[#007AFF] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0066CC]">
-              {t('exportPrivateLedgerPdf')}
-            </button>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -321,6 +245,8 @@ export default function PrivateLedgerClient({
         </div>
         {canManage && <p className="mt-3 text-xs text-gray-400">{t('privateLedgerVisibilityHint')}</p>}
       </section>
+
+      <PrivateLedgerReportPanel locale={locale} ownerId={owner.id} ownerName={owner.roleName} />
 
       {canManage && (
         <>

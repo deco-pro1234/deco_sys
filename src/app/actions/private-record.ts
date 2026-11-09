@@ -162,6 +162,75 @@ export async function getPrivateRecords(ownerId?: string) {
   })
 }
 
+export type PrivateReportFilter = {
+  ownerId?: string
+  startDate?: Date
+  endDate?: Date
+  type?: 'INCOME' | 'EXPENSE' | 'ALL'
+  categoryKeyword?: string
+}
+
+export async function getPrivateReportRecords(filter: PrivateReportFilter = {}) {
+  const session = await getSession()
+  if (!session) return []
+
+  const targetOwnerId = filter.ownerId || session.userId
+  await assertPrivateLedgerReadable(targetOwnerId)
+
+  const where: {
+    userId: string
+    date?: { gte?: Date; lte?: Date }
+    type?: string
+    AND?: Array<Record<string, unknown>>
+  } = {
+    userId: targetOwnerId,
+  }
+
+  if (filter.startDate || filter.endDate) {
+    where.date = {}
+    if (filter.startDate) where.date.gte = filter.startDate
+    if (filter.endDate) where.date.lte = filter.endDate
+  }
+
+  if (filter.type && filter.type !== 'ALL') {
+    where.type = filter.type
+  }
+
+  const categoryKeyword = filter.categoryKeyword?.trim()
+  if (categoryKeyword) {
+    where.AND = [
+      ...(where.AND || []),
+      {
+        OR: [
+          { customCategory: { contains: categoryKeyword, mode: 'insensitive' } },
+          { category: { name: { contains: categoryKeyword, mode: 'insensitive' } } },
+          { subCategory: { name: { contains: categoryKeyword, mode: 'insensitive' } } },
+          { thirdCategory: { name: { contains: categoryKeyword, mode: 'insensitive' } } },
+        ],
+      },
+    ]
+  }
+
+  return prisma.privateRecord.findMany({
+    where,
+    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    include: {
+      category: { select: { name: true } },
+      subCategory: { select: { name: true } },
+      thirdCategory: { select: { name: true } },
+      attachments: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          fileUrl: true,
+          note: true,
+          createdAt: true,
+        },
+      },
+    },
+  })
+}
+
 export async function getSharedPrivateLedgerUsers() {
   const session = await getSession()
   if (!session) return []
